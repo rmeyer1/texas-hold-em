@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Using App Router by default in Next.js 13+
 };
 
 export default nextConfig;
