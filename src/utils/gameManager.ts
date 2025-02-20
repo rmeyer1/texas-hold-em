@@ -1,10 +1,13 @@
 import { Card, Player, Table } from '../types/poker';
 import { Deck } from './deck';
 import { findBestHand } from './handEvaluator';
+import { TableService } from '../services/tableService';
 
 export class GameManager {
   private deck: Deck;
   private table: Table;
+  private tableService: TableService;
+  private tableStateCallback?: (table: Table) => void;
 
   constructor(tableId: string) {
     this.deck = new Deck();
@@ -15,69 +18,82 @@ export class GameManager {
       pot: 0,
       currentBet: 0,
       dealerPosition: 0,
+      currentPlayerIndex: 0,
+      smallBlind: 1,
+      bigBlind: 2,
+      lastActionTimestamp: Date.now(),
+      turnTimeLimit: 45000, // 30 seconds
       phase: 'preflop',
+      bettingRound: 'first_round',
+      roundBets: {},
+      minRaise: 2
     };
+    this.tableService = new TableService(tableId);
   }
 
-  public addPlayer(player: Omit<Player, 'holeCards' | 'isActive' | 'hasFolded'>): void {
-    if (this.table.players.length >= 10) {
-      throw new Error('Table is full');
-    }
+  public async initialize(): Promise<void> {
+    await this.tableService.createTable(this.table.id);
+  }
 
-    this.table.players.push({
-      ...player,
-      holeCards: [],
-      isActive: true,
-      hasFolded: false,
+  public subscribeToTableState(callback: (table: Table) => void): () => void {
+    this.tableStateCallback = callback;
+    return this.tableService.subscribeToTable((table) => {
+      this.table = table;
+      this.tableStateCallback?.(table);
     });
   }
 
-  public removePlayer(playerId: string): void {
-    const index = this.table.players.findIndex((p) => p.id === playerId);
-    if (index !== -1) {
-      this.table.players.splice(index, 1);
-    }
+  public async addPlayer(player: Omit<Player, 'holeCards' | 'isActive' | 'hasFolded'>): Promise<void> {
+    await this.tableService.addPlayer(player);
   }
 
-  public startNewHand(): void {
+  public async removePlayer(playerId: string): Promise<void> {
+    await this.tableService.removePlayer(playerId);
+  }
+
+  public async startNewHand(): Promise<void> {
     // Reset the deck
     this.deck = new Deck();
 
     // Reset table state
-    this.table.communityCards = [];
-    this.table.pot = 0;
-    this.table.currentBet = 0;
-    this.table.phase = 'preflop';
+    const tableUpdate: Partial<Table> = {
+      communityCards: [],
+      pot: 0,
+      currentBet: 0,
+      phase: 'preflop',
+      dealerPosition: (this.table.dealerPosition + 1) % this.table.players.length,
+    };
 
     // Reset player states
-    this.table.players.forEach((player) => {
-      player.holeCards = [];
-      player.isActive = true;
-      player.hasFolded = false;
-    });
+    const players = this.table.players.map((player) => ({
+      ...player,
+      holeCards: [],
+      isActive: true,
+      hasFolded: false,
+    }));
 
-    // Move dealer button
-    this.table.dealerPosition = (this.table.dealerPosition + 1) % this.table.players.length;
+    await this.tableService.updateTable({ ...tableUpdate, players });
 
     // Deal hole cards
-    this.dealHoleCards();
+    await this.dealHoleCards();
   }
 
-  private dealHoleCards(): void {
-    // Deal 2 cards to each active player
-    this.table.players.forEach((player) => {
+  private async dealHoleCards(): Promise<void> {
+    const players = this.table.players.map((player) => {
       if (player.isActive) {
         const cards = this.deck.dealHoleCards();
         if (cards) {
-          player.holeCards = cards;
-        } else {
-          throw new Error('Not enough cards in deck');
+          return { ...player, holeCards: cards };
         }
+        throw new Error('Not enough cards in deck');
       }
+      return player;
     });
+
+    await this.tableService.updateTable({ players });
   }
 
-  public dealFlop(): void {
+  public async dealFlop(): Promise<void> {
     if (this.table.phase !== 'preflop') {
       throw new Error('Cannot deal flop at this time');
     }
@@ -87,11 +103,13 @@ export class GameManager {
       throw new Error('Not enough cards in deck');
     }
 
-    this.table.communityCards = flop;
-    this.table.phase = 'flop';
+    await this.tableService.updateTable({
+      communityCards: flop,
+      phase: 'flop',
+    });
   }
 
-  public dealTurn(): void {
+  public async dealTurn(): Promise<void> {
     if (this.table.phase !== 'flop') {
       throw new Error('Cannot deal turn at this time');
     }
@@ -101,11 +119,13 @@ export class GameManager {
       throw new Error('Not enough cards in deck');
     }
 
-    this.table.communityCards.push(turnCard);
-    this.table.phase = 'turn';
+    await this.tableService.updateTable({
+      communityCards: [...this.table.communityCards, turnCard],
+      phase: 'turn',
+    });
   }
 
-  public dealRiver(): void {
+  public async dealRiver(): Promise<void> {
     if (this.table.phase !== 'turn') {
       throw new Error('Cannot deal river at this time');
     }
@@ -115,8 +135,10 @@ export class GameManager {
       throw new Error('Not enough cards in deck');
     }
 
-    this.table.communityCards.push(riverCard);
-    this.table.phase = 'river';
+    await this.tableService.updateTable({
+      communityCards: [...this.table.communityCards, riverCard],
+      phase: 'river',
+    });
   }
 
   public evaluatePlayerHands(): { playerId: string; hand: ReturnType<typeof findBestHand> }[] {
@@ -153,14 +175,11 @@ export class GameManager {
     return this.table.players.find((p) => p.id === playerId);
   }
 
-  public foldPlayer(playerId: string): void {
-    const player = this.table.players.find((p) => p.id === playerId);
-    if (player) {
-      player.hasFolded = true;
-    }
+  public async foldPlayer(playerId: string): Promise<void> {
+    await this.tableService.updatePlayerState(playerId, { hasFolded: true });
   }
 
-  public placeBet(playerId: string, amount: number): void {
+  public async placeBet(playerId: string, amount: number): Promise<void> {
     const player = this.table.players.find((p) => p.id === playerId);
     if (!player) {
       throw new Error('Player not found');
@@ -174,8 +193,13 @@ export class GameManager {
       throw new Error('Not enough chips');
     }
 
-    player.chips -= amount;
-    this.table.pot += amount;
-    this.table.currentBet = Math.max(this.table.currentBet, amount);
+    await this.tableService.updatePlayerState(playerId, {
+      chips: player.chips - amount,
+    });
+
+    await this.tableService.updateTable({
+      pot: this.table.pot + amount,
+      currentBet: Math.max(this.table.currentBet, amount),
+    });
   }
 } 

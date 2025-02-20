@@ -26,8 +26,8 @@ export const CommunityCards: React.FC<CommunityCardsProps> = ({ cards, phase }) 
 
   return (
     <div className="flex items-center justify-center gap-2 my-4">
-      {cards.map((card, index) => (
-        <Card key={`${card.suit}-${card.rank}-${index}`} card={card} />
+      {cards.map((card) => (
+        <Card key={`${card.suit}-${card.rank}`} card={card} />
       ))}
       {renderPlaceholders()}
     </div>

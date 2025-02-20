@@ -44,4 +44,12 @@ export interface Table {
   currentBet: number;
   dealerPosition: number;
   phase: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
+  currentPlayerIndex: number;
+  smallBlind: number;
+  bigBlind: number;
+  lastActionTimestamp: number;
+  bettingRound: 'small_blind' | 'big_blind' | 'first_round' | 'betting';
+  roundBets: { [playerId: string]: number };
+  minRaise: number;
+  turnTimeLimit: number;
 } 

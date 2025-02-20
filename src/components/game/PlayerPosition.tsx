@@ -1,5 +1,5 @@
 import React from 'react';
-import { Player } from '@/types/poker';
+import { Player, Table } from '@/types/poker';
 import { Card } from './Card';
 
 interface PlayerPositionProps {
@@ -8,6 +8,7 @@ interface PlayerPositionProps {
   isCurrentPlayer: boolean;
   position: number;
   totalPlayers: number;
+  table: Table;
 }
 
 export const PlayerPosition: React.FC<PlayerPositionProps> = ({
@@ -16,6 +17,7 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
   isCurrentPlayer,
   position,
   totalPlayers,
+  table,
 }) => {
   // Calculate position around an ellipse
   const getPosition = () => {
@@ -54,9 +56,9 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
 
         {/* Cards */}
         <div className="flex gap-1 -mt-1">
-          {player.holeCards.map((card, index) => (
+          {player.holeCards.map((card) => (
             <Card
-              key={`${card.suit}-${card.rank}-${index}`}
+              key={`${card.suit}-${card.rank}`}
               card={card}
               faceDown={!isCurrentPlayer}
               className="transform scale-75"
