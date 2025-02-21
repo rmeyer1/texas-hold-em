@@ -31,7 +31,6 @@ export const PokerTable: React.FC<PokerTableProps> = ({
       player.id &&
       player.name &&
       typeof player.chips === 'number' &&
-      Array.isArray(player.holeCards) &&
       typeof player.position === 'number' &&
       typeof player.isActive === 'boolean' &&
       typeof player.hasFolded === 'boolean'

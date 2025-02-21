@@ -4,7 +4,9 @@ import { useState, type FormEvent } from 'react';
 import { signInWithEmail } from '@/services/firebase';
 import { useRouter } from 'next/navigation';
 
-export const SignInForm = (): JSX.Element => {
+interface SignInFormProps {}
+
+export const SignInForm: React.FC<SignInFormProps> = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');

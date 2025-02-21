@@ -4,7 +4,9 @@ import { useState, type FormEvent } from 'react';
 import { signUpWithEmail } from '@/services/firebase';
 import { useRouter } from 'next/navigation';
 
-export const SignUpForm = (): JSX.Element => {
+interface SignUpFormProps {}
+
+export const SignUpForm: React.FC<SignUpFormProps> = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');

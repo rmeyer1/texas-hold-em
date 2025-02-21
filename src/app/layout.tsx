@@ -1,7 +1,9 @@
 import { AuthProvider } from '@/contexts/AuthContext';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import './globals.css';
+import '@/styles/globals.css';
+import { Nav } from '@/components/Nav';
+import type { ReactNode } from 'react';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -13,12 +15,15 @@ export const metadata: Metadata = {
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
-}): JSX.Element {
+  children: ReactNode;
+}): React.ReactElement {
   return (
     <html lang="en">
       <body className={inter.className}>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <Nav />
+          <main>{children}</main>
+        </AuthProvider>
       </body>
     </html>
   );
