@@ -1,8 +1,9 @@
-import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
-import { getDatabase, type Database } from 'firebase/database';
+import { initializeApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
+import { getDatabase } from 'firebase/database';
 
 const firebaseConfig = {
+  // Replace these with your Firebase config values
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
@@ -13,19 +14,44 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-let firebaseApp: FirebaseApp;
+const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+export const database = getDatabase(app);
 
-if (!getApps().length) {
-  firebaseApp = initializeApp(firebaseConfig);
-} else {
-  firebaseApp = getApps()[0];
-}
+export type AuthError = {
+  code: string;
+  message: string;
+};
 
-// Initialize Firebase services
-const auth = getAuth(firebaseApp);
-const database = getDatabase(firebaseApp);
+export const signUpWithEmail = async (
+  email: string,
+  password: string
+): Promise<{ user: User } | { error: AuthError }> => {
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    return { user: userCredential.user };
+  } catch (error) {
+    return { error: error as AuthError };
+  }
+};
 
-export { firebaseApp, auth, database };
+export const signInWithEmail = async (
+  email: string,
+  password: string
+): Promise<{ user: User } | { error: AuthError }> => {
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    return { user: userCredential.user };
+  } catch (error) {
+    return { error: error as AuthError };
+  }
+};
 
-// Types for Firebase instances
-export type { Auth, Database }; 
+export const signOutUser = async (): Promise<{ error?: AuthError }> => {
+  try {
+    await signOut(auth);
+    return {};
+  } catch (error) {
+    return { error: error as AuthError };
+  }
+}; 

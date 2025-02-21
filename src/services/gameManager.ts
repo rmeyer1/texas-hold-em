@@ -1,20 +1,98 @@
-import { ref, set, update, onValue, off, get } from 'firebase/database';
+import { ref, set, update, onValue, off, get, runTransaction } from 'firebase/database';
 import { database } from './firebase';
-import type { Table, Player } from '@/types/poker';
+import type { Table, Player, Card, PrivatePlayerData, Hand } from '@/types/poker';
+import { Deck } from '@/utils/deck';
+import { findBestHand } from '@/utils/handEvaluator';
 
 export class GameManager {
   private tableRef;
+  private deck: Deck;
   private static readonly TURN_TIME_LIMIT = 45000; // 45 seconds in milliseconds
   private static readonly DEFAULT_SMALL_BLIND = 10;
   private static readonly DEFAULT_BIG_BLIND = 20;
+  private tableStateCallback?: (table: Table) => void;
 
   constructor(tableId: string) {
     this.tableRef = ref(database, `tables/${tableId}`);
+    this.deck = new Deck();
+  }
+
+  private getPrivatePlayerRef(playerId: string): any {
+    return ref(database, `private_player_data/${this.tableRef.key}/${playerId}`);
+  }
+
+  public async initialize(): Promise<void> {
+    const initialTable: Table = {
+      id: this.tableRef.key!,
+      players: [],
+      communityCards: [],
+      pot: 0,
+      currentBet: 0,
+      dealerPosition: 0,
+      currentPlayerIndex: 0,
+      smallBlind: GameManager.DEFAULT_SMALL_BLIND,
+      bigBlind: GameManager.DEFAULT_BIG_BLIND,
+      lastActionTimestamp: Date.now(),
+      turnTimeLimit: GameManager.TURN_TIME_LIMIT,
+      phase: 'preflop',
+      bettingRound: 'first_round',
+      roundBets: {},
+      minRaise: GameManager.DEFAULT_BIG_BLIND,
+    };
+    await set(this.tableRef, initialTable);
+  }
+
+  public subscribeToTableState(callback: (table: Table) => void): () => void {
+    this.tableStateCallback = callback;
+    const unsubscribe = onValue(this.tableRef, (snapshot) => {
+      const table = snapshot.val() as Table;
+      this.tableStateCallback?.(table);
+    });
+    return () => {
+      off(this.tableRef);
+      this.tableStateCallback = undefined;
+    };
+  }
+
+  public async getTableState(): Promise<Table> {
+    return await this.getTable();
+  }
+
+  public async addPlayer(player: Omit<Player, 'isActive' | 'hasFolded'>): Promise<void> {
+    const table = await this.getTable();
+    const newPlayer: Player = {
+      ...player,
+      isActive: true,
+      hasFolded: false,
+    };
+    
+    const updatedPlayers = Array.isArray(table.players) ? [...table.players] : [];
+    // Check for existing player with same ID
+    if (updatedPlayers.some(p => p.id === newPlayer.id)) {
+      return; // Player already exists, skip addition
+    }
+    
+    updatedPlayers.push(newPlayer);
+    
+    await update(this.tableRef, { players: updatedPlayers });
+  }
+
+  public async foldPlayer(playerId: string): Promise<void> {
+    await this.handlePlayerAction(playerId, 'fold');
+  }
+
+  public async placeBet(playerId: string, amount: number): Promise<void> {
+    await this.handlePlayerAction(playerId, 'raise', amount);
   }
 
   private async getTable(): Promise<Table> {
     const snapshot = await get(this.tableRef);
-    return snapshot.val() as Table;
+    const table = snapshot.val() as Table;
+    // Ensure players array exists
+    if (!table.players) {
+      table.players = [];
+    }
+    return table;
   }
 
   public async initializeRound(): Promise<void> {
@@ -30,10 +108,19 @@ export class GameManager {
     const smallBlindPos = (newDealerPosition + 1) % activePlayers.length;
     const bigBlindPos = (newDealerPosition + 2) % activePlayers.length;
 
+    // Find the actual indices in the full players array
+    const smallBlindPlayer = activePlayers[smallBlindPos];
+    const bigBlindPlayer = activePlayers[bigBlindPos];
+    const nextActivePlayerIndex = (bigBlindPos + 1) % activePlayers.length;
+    const nextPlayer = activePlayers[nextActivePlayerIndex];
+    
+    // Find the actual index in the full players array
+    const currentPlayerIndex = table.players.findIndex(p => p.id === nextPlayer.id);
+
     // Reset table state for new round
     const updates: Partial<Table> = {
       dealerPosition: newDealerPosition,
-      currentPlayerIndex: (bigBlindPos + 1) % activePlayers.length,
+      currentPlayerIndex,
       phase: 'preflop',
       pot: 0,
       currentBet: table.bigBlind || GameManager.DEFAULT_BIG_BLIND,
@@ -48,9 +135,6 @@ export class GameManager {
     };
 
     // Post blinds
-    const smallBlindPlayer = activePlayers[smallBlindPos];
-    const bigBlindPlayer = activePlayers[bigBlindPos];
-    
     updates.roundBets = {
       [smallBlindPlayer.id]: updates.smallBlind!,
       [bigBlindPlayer.id]: updates.bigBlind!,
@@ -136,30 +220,62 @@ export class GameManager {
   }
 
   private async handleRaise(playerId: string, raiseAmount: number): Promise<void> {
-    const table = await this.getTable();
-    const player = table.players.find(p => p.id === playerId)!;
-    const totalBet = table.currentBet + raiseAmount;
+    const tableRef = this.tableRef;
     
-    if (totalBet - (table.roundBets[playerId] || 0) > player.chips) {
-      throw new Error('Not enough chips to raise');
-    }
+    await runTransaction(tableRef, (currentTable: Table) => {
+      if (!currentTable) return currentTable;
 
-    const updatedPlayers = table.players.map(p =>
-      p.id === playerId ? { ...p, chips: p.chips - (totalBet - (table.roundBets[playerId] || 0)) } : p
-    );
+      const player = currentTable.players.find(p => p.id === playerId)!;
+      const currentBet = currentTable.currentBet || 0;
+      const playerCurrentBet = currentTable.roundBets[playerId] || 0;
+      const totalBetAmount = raiseAmount - playerCurrentBet;
 
-    const roundBets = {
-      ...table.roundBets,
-      [playerId]: totalBet,
-    };
+      // Validate the raise
+      if (totalBetAmount > player.chips) {
+        throw new Error('Not enough chips to raise');
+      }
+      if (raiseAmount <= currentBet) {
+        throw new Error('Raise amount must be greater than current bet');
+      }
 
+      // Update player chips and round bets atomically
+      const updatedPlayers = currentTable.players.map(p =>
+        p.id === playerId ? { ...p, chips: p.chips - totalBetAmount } : p
+      );
+
+      const roundBets = {
+        ...currentTable.roundBets,
+        [playerId]: raiseAmount,
+      };
+
+      // Calculate new pot
+      const newPot = currentTable.pot + totalBetAmount;
+
+      // Update table state atomically
+      return {
+        ...currentTable,
+        players: updatedPlayers,
+        currentBet: raiseAmount,
+        minRaise: raiseAmount + (currentTable.minRaise || GameManager.DEFAULT_BIG_BLIND),
+        pot: newPot,
+        roundBets,
+        lastActionTimestamp: Date.now(),
+      };
+    });
+
+    // After successful transaction, get updated table state and move to next player
+    const updatedTable = await this.getTable();
     await this.moveToNextPlayer(
-      table,
-      updatedPlayers,
-      roundBets,
-      totalBet,
-      raiseAmount
+      updatedTable,
+      updatedTable.players,
+      updatedTable.roundBets,
+      updatedTable.currentBet,
+      updatedTable.minRaise
     );
+  }
+
+  private isPlayerAllIn(player: Player, roundBets: { [playerId: string]: number }): boolean {
+    return player.isActive && !player.hasFolded && player.chips === 0;
   }
 
   private async moveToNextPlayer(
@@ -169,11 +285,29 @@ export class GameManager {
     newCurrentBet?: number,
     newMinRaise?: number
   ): Promise<void> {
-    const activePlayers = updatedPlayers.filter(p => p.isActive && !p.hasFolded && p.chips > 0);
+    const activePlayers = updatedPlayers.filter(p => p.isActive && !p.hasFolded);
+    const currentRoundBets = roundBets || table.roundBets;
     
     if (activePlayers.length === 1) {
       // Round over - one player remains
-      await this.endRound(table, updatedPlayers, activePlayers[0]);
+      await this.endRound(table, updatedPlayers);
+      return;
+    }
+
+    // Check if all remaining players are all-in
+    const allInPlayers = activePlayers.filter(p => this.isPlayerAllIn(p, currentRoundBets));
+    const nonAllInPlayer = activePlayers.find(p => !this.isPlayerAllIn(p, currentRoundBets));
+    
+    if (allInPlayers.length === activePlayers.length || 
+        (allInPlayers.length === activePlayers.length - 1 && 
+         nonAllInPlayer && nonAllInPlayer.chips <= table.currentBet)) {
+      // All players are all-in or only one player has chips but can't call
+      const updates: Partial<Table> = {
+        players: updatedPlayers,
+        phase: 'showdown',
+        lastActionTimestamp: Date.now(),
+      };
+      await update(this.tableRef, updates);
       return;
     }
 
@@ -246,22 +380,189 @@ export class GameManager {
     await update(this.tableRef, updates);
   }
 
-  private async endRound(table: Table, players: Player[], winner?: Player): Promise<void> {
-    // Calculate total pot
-    const totalPot = Object.values(table.roundBets).reduce((sum, bet) => sum + bet, 0);
+  public async startNewHand(): Promise<void> {
+    // Reset the deck
+    this.deck = new Deck();
+    const table = await this.getTable();
+    
+    // Deal hole cards to active players and store them in private refs
+    const updatedPlayers = table.players.map((player) => ({
+      ...player,
+      hasFolded: false,
+    }));
 
-    const updates: Partial<Table> = {
-      players: winner
-        ? players.map(p =>
-            p.id === winner.id ? { ...p, chips: p.chips + totalPot } : p
-          )
-        : players,
+    // Deal and store private cards
+    for (const player of table.players) {
+      if (player.isActive) {
+        const cards = this.deck.dealHoleCards();
+        if (!cards) {
+          throw new Error('Not enough cards in deck');
+        }
+        
+        // Store hole cards in private reference
+        const privateData: PrivatePlayerData = {
+          holeCards: cards,
+          lastUpdated: Date.now(),
+        };
+        await set(this.getPrivatePlayerRef(player.id), privateData);
+      }
+    }
+
+    await this.initializeRound();
+    await update(this.tableRef, { players: updatedPlayers });
+  }
+
+  public async dealFlop(): Promise<void> {
+    const table = await this.getTable();
+    if (table.phase !== 'preflop') {
+      throw new Error('Cannot deal flop at this time');
+    }
+
+    const flop = this.deck.dealFlop();
+    if (!flop) {
+      throw new Error('Not enough cards in deck');
+    }
+
+    await update(this.tableRef, {
+      communityCards: flop,
+      phase: 'flop',
+      currentBet: 0,
+      roundBets: {},
+      minRaise: table.bigBlind,
+    });
+  }
+
+  public async dealTurn(): Promise<void> {
+    const table = await this.getTable();
+    if (table.phase !== 'flop') {
+      throw new Error('Cannot deal turn at this time');
+    }
+
+    const turnCard = this.deck.dealCard();
+    if (!turnCard) {
+      throw new Error('Not enough cards in deck');
+    }
+
+    await update(this.tableRef, {
+      communityCards: [...table.communityCards, turnCard],
+      phase: 'turn',
+      currentBet: 0,
+      roundBets: {},
+      minRaise: table.bigBlind,
+    });
+  }
+
+  public async dealRiver(): Promise<void> {
+    const table = await this.getTable();
+    if (table.phase !== 'turn') {
+      throw new Error('Cannot deal river at this time');
+    }
+
+    const riverCard = this.deck.dealCard();
+    if (!riverCard) {
+      throw new Error('Not enough cards in deck');
+    }
+
+    await update(this.tableRef, {
+      communityCards: [...table.communityCards, riverCard],
+      phase: 'river',
+      currentBet: 0,
+      roundBets: {},
+      minRaise: table.bigBlind,
+    });
+  }
+
+  private async evaluatePlayerHands(table: Table): Promise<Array<{ playerId: string; hand: Hand }>> {
+    const activePlayers = table.players.filter((p) => p.isActive && !p.hasFolded);
+    
+    // Get all hole cards and evaluate hands
+    const evaluations = await Promise.all(
+      activePlayers.map(async (player) => {
+        const holeCards = await this.getPlayerHoleCards(player.id);
+        if (!holeCards) {
+          return null;
+        }
+        
+        const hand = findBestHand(holeCards, table.communityCards);
+        return {
+          playerId: player.id,
+          hand,
+        };
+      })
+    );
+
+    // Filter out null results and sort by hand value
+    return evaluations
+      .filter((evaluation): evaluation is { playerId: string; hand: Hand } => evaluation !== null)
+      .sort((a, b) => b.hand.value - a.hand.value);
+  }
+
+  private async getWinners(table: Table): Promise<string[]> {
+    const activePlayers = table.players.filter(p => p.isActive && !p.hasFolded);
+    if (activePlayers.length <= 1) {
+      return activePlayers.map(p => p.id);
+    }
+
+    // Get all hole cards for active players
+    const playerHands = await Promise.all(
+      activePlayers.map(async (player) => {
+        const holeCards = await this.getPlayerHoleCards(player.id);
+        return {
+          playerId: player.id,
+          cards: holeCards || [],
+        };
+      })
+    );
+
+    // Find best hand for each player
+    const playerHandRankings = playerHands.map((hand) => {
+      const bestHand = findBestHand(hand.cards, table.communityCards);
+      return {
+        playerId: hand.playerId,
+        handValue: bestHand.value,
+      };
+    });
+
+    // Find highest hand value
+    const highestHandValue = Math.max(...playerHandRankings.map(h => h.handValue));
+
+    // Return all players with the highest hand value (handles split pots)
+    return playerHandRankings
+      .filter(h => h.handValue === highestHandValue)
+      .map(h => h.playerId);
+  }
+
+  private async endRound(table: Table, players: Player[]): Promise<void> {
+    const winners = await this.getWinners(table);
+    const winningAmount = table.pot / winners.length;
+
+    const updatedPlayers = players.map(player => {
+      if (winners.includes(player.id)) {
+        return { ...player, chips: player.chips + winningAmount };
+      }
+      return player;
+    });
+
+    // Clear private data for all players
+    for (const player of players) {
+      await set(this.getPrivatePlayerRef(player.id), null);
+    }
+
+    await update(this.tableRef, {
+      players: updatedPlayers,
       phase: 'showdown',
+      winners,
       pot: 0,
       currentBet: 0,
       roundBets: {},
-    };
+      communityCards: [],
+      lastActionTimestamp: Date.now(),
+    });
+  }
 
-    await update(this.tableRef, updates);
+  public async getPlayerHoleCards(playerId: string): Promise<Card[] | null> {
+    const snapshot = await get(this.getPrivatePlayerRef(playerId));
+    const privateData = snapshot.val() as PrivatePlayerData | null;
+    return privateData?.holeCards || null;
   }
 } 

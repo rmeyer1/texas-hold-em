@@ -1,0 +1,22 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "tables": {
+      ".read": true,
+      ".write": "auth != null",
+      "$tableId": {
+        ".read": true,
+        ".write": "auth != null"
+      }
+    },
+    "private_player_data": {
+      "$tableId": {
+        "$playerId": {
+          ".read": "auth != null && auth.uid === $playerId",
+          ".write": "auth != null && auth.uid === $playerId"
+        }
+      }
+    }
+  }
+} 

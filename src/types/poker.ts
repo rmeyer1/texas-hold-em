@@ -26,11 +26,15 @@ export interface Hand {
   description: string;
 }
 
+export interface PrivatePlayerData {
+  holeCards: Card[];
+  lastUpdated: number;
+}
+
 export interface Player {
   id: string;
   name: string;
   chips: number;
-  holeCards: Card[];
   position: number;
   isActive: boolean;
   hasFolded: boolean;

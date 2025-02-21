@@ -59,6 +59,16 @@ const getFrequencyMap = (cards: Card[]): Map<string, number> => {
   return frequencyMap;
 };
 
+// Helper function to calculate kicker value
+const calculateKickerValue = (cards: Card[], excludeRanks: string[] = []): number => {
+  const kickers = cards
+    .filter((card) => !excludeRanks.includes(card.rank))
+    .map((card) => getRankValue(card.rank));
+  
+  // Calculate value with diminishing significance for each kicker
+  return kickers.reduce((acc, val, index) => acc + val * Math.pow(0.01, index), 0);
+};
+
 export const evaluateHand = (cards: Card[]): Hand => {
   if (cards.length !== 5) {
     throw new Error('Hand must contain exactly 5 cards');
@@ -95,10 +105,11 @@ export const evaluateHand = (cards: Card[]): Hand => {
     const fourOfAKindRank = Array.from(frequencyMap.entries()).find(
       ([_, freq]) => freq === 4
     )![0];
+    const kickerValue = calculateKickerValue(sortedCards, [fourOfAKindRank]);
     return {
       cards: sortedCards,
       rank: 'Four of a Kind',
-      value: 800 + getRankValue(fourOfAKindRank),
+      value: 800 + getRankValue(fourOfAKindRank) + kickerValue,
       description: `Four of a Kind, ${fourOfAKindRank}s`,
     };
   }
@@ -112,17 +123,18 @@ export const evaluateHand = (cards: Card[]): Hand => {
     return {
       cards: sortedCards,
       rank: 'Full House',
-      value: 700 + getRankValue(threeOfAKindRank) * 10 + getRankValue(pairRank),
+      value: 700 + getRankValue(threeOfAKindRank) + getRankValue(pairRank) * 0.1,
       description: `Full House, ${threeOfAKindRank}s over ${pairRank}s`,
     };
   }
 
   // Flush
   if (isHandFlush) {
+    const kickerValue = calculateKickerValue(sortedCards);
     return {
       cards: sortedCards,
       rank: 'Flush',
-      value: 600 + getRankValue(sortedCards[0].rank),
+      value: 600 + kickerValue,
       description: `Flush, ${sortedCards[0].rank} high`,
     };
   }
@@ -142,10 +154,11 @@ export const evaluateHand = (cards: Card[]): Hand => {
     const threeOfAKindRank = Array.from(frequencyMap.entries()).find(
       ([_, freq]) => freq === 3
     )![0];
+    const kickerValue = calculateKickerValue(sortedCards, [threeOfAKindRank]);
     return {
       cards: sortedCards,
       rank: 'Three of a Kind',
-      value: 400 + getRankValue(threeOfAKindRank),
+      value: 400 + getRankValue(threeOfAKindRank) + kickerValue,
       description: `Three of a Kind, ${threeOfAKindRank}s`,
     };
   }
@@ -156,10 +169,11 @@ export const evaluateHand = (cards: Card[]): Hand => {
       .filter(([_, freq]) => freq === 2)
       .map(([rank, _]) => rank)
       .sort((a, b) => getRankValue(b) - getRankValue(a));
+    const kickerValue = calculateKickerValue(sortedCards, pairs);
     return {
       cards: sortedCards,
       rank: 'Two Pair',
-      value: 300 + getRankValue(pairs[0]) * 10 + getRankValue(pairs[1]),
+      value: 300 + getRankValue(pairs[0]) + getRankValue(pairs[1]) * 0.1 + kickerValue,
       description: `Two Pair, ${pairs[0]}s and ${pairs[1]}s`,
     };
   }
@@ -167,19 +181,21 @@ export const evaluateHand = (cards: Card[]): Hand => {
   // One Pair
   if (frequencies[0] === 2) {
     const pairRank = Array.from(frequencyMap.entries()).find(([_, freq]) => freq === 2)![0];
+    const kickerValue = calculateKickerValue(sortedCards, [pairRank]);
     return {
       cards: sortedCards,
       rank: 'One Pair',
-      value: 200 + getRankValue(pairRank),
+      value: 200 + getRankValue(pairRank) + kickerValue,
       description: `Pair of ${pairRank}s`,
     };
   }
 
   // High Card
+  const kickerValue = calculateKickerValue(sortedCards);
   return {
     cards: sortedCards,
     rank: 'High Card',
-    value: 100 + getRankValue(sortedCards[0].rank),
+    value: 100 + kickerValue,
     description: `High Card, ${sortedCards[0].rank}`,
   };
 };
