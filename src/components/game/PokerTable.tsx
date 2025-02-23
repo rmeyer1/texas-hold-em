@@ -48,6 +48,9 @@ export const PokerTable: React.FC<PokerTableProps> = ({
       return { isValid: false, errors };
     }
 
+    // Ensure community cards is always an array
+    const communityCards = Array.isArray(table.communityCards) ? table.communityCards : [];
+
     // Create sanitized table with defaults
     const sanitizedTable: Table = {
       id: table.id!,
@@ -55,7 +58,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({
       phase: table.phase || 'waiting',
       currentBet: table.currentBet || 0,
       pot: table.pot || 0,
-      communityCards: Array.isArray(table.communityCards) ? table.communityCards : [],
+      communityCards,
       dealerPosition: table.dealerPosition || 0,
       currentPlayerIndex: table.currentPlayerIndex || 0,
       smallBlind: table.smallBlind || 10,
@@ -84,10 +87,6 @@ export const PokerTable: React.FC<PokerTableProps> = ({
 
     if (typeof table.pot !== 'number') {
       warnings.push('Pot amount is missing, defaulting to 0');
-    }
-
-    if (!Array.isArray(table.communityCards)) {
-      warnings.push('Community cards array is missing, defaulting to empty array');
     }
 
     if (typeof table.dealerPosition !== 'number') {
@@ -231,79 +230,79 @@ export const PokerTable: React.FC<PokerTableProps> = ({
               table={sanitizedTable}
             />
           ))}
-        </div>
 
-        {/* Action buttons for current player */}
-        {currentPlayerId && currentPlayer && !currentPlayer.hasFolded && (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex flex-col items-center gap-4">
-            <div className="flex gap-2">
-              <button
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => onPlayerAction?.('fold')}
-                disabled={!onPlayerAction || currentPlayer.hasFolded}
-              >
-                Fold
-              </button>
-              <button
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => onPlayerAction?.('check')}
-                disabled={!onPlayerAction || currentBet > 0}
-              >
-                Check
-              </button>
-              <button
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => onPlayerAction?.('call')}
-                disabled={!onPlayerAction || currentBet === 0}
-              >
-                Call ${currentBet}
-              </button>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  className="w-20 px-2 py-1 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                  placeholder="Amount"
-                  min={currentBet * 2}
-                  max={currentPlayer.chips}
-                  disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2}
-                />
-                <button
-                  className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={() => {
-                    const input = document.querySelector('input[type="number"]') as HTMLInputElement;
-                    const amount = parseInt(input.value);
-                    if (amount && amount >= currentBet * 2) {
-                      onPlayerAction?.('raise', amount);
-                    }
-                  }}
-                  disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2}
-                >
-                  Raise
-                </button>
-              </div>
-            </div>
-            
-            {/* Turn Timer */}
-            <div className="flex justify-center">
-              <TurnTimer table={sanitizedTable} isCurrentPlayer={true} />
-            </div>
+          {/* Game phase indicator */}
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-lg font-semibold">
+            {phase.charAt(0).toUpperCase() + phase.slice(1)}
           </div>
-        )}
 
-        {/* Game phase indicator */}
-        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-lg font-semibold">
-          {phase.charAt(0).toUpperCase() + phase.slice(1)}
+          {/* Last action display */}
+          {sanitizedTable.lastAction && sanitizedTable.lastActivePlayer && (
+            <div className="absolute top-4 right-4 text-white text-sm">
+              {typeof sanitizedTable.lastActivePlayer === 'string' 
+                ? sanitizedTable.lastActivePlayer 
+                : players.find(p => p.id === sanitizedTable.lastActivePlayer)?.name}: {sanitizedTable.lastAction}
+            </div>
+          )}
         </div>
-
-        {/* Last action display */}
-        {sanitizedTable.lastAction && sanitizedTable.lastActivePlayer && (
-          <div className="absolute top-4 right-4 text-white text-sm">
-            {typeof sanitizedTable.lastActivePlayer === 'string' 
-              ? sanitizedTable.lastActivePlayer 
-              : players.find(p => p.id === sanitizedTable.lastActivePlayer)?.name}: {sanitizedTable.lastAction}
-          </div>
-        )}
       </div>
+
+      {/* Action buttons and timer for current player - Moved outside table container */}
+      {currentPlayerId && currentPlayer && !currentPlayer.hasFolded && (
+        <div className="mt-6 flex flex-col items-center gap-4 p-4 bg-gray-800 rounded-lg shadow-lg">
+          {/* Turn Timer */}
+          <div className="flex justify-center mb-2">
+            <TurnTimer table={sanitizedTable} isCurrentPlayer={true} />
+          </div>
+
+          <div className="flex flex-wrap justify-center gap-3">
+            <button
+              className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              onClick={() => onPlayerAction?.('fold')}
+              disabled={!onPlayerAction || currentPlayer.hasFolded}
+            >
+              Fold
+            </button>
+            <button
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              onClick={() => onPlayerAction?.('check')}
+              disabled={!onPlayerAction || currentBet > 0}
+            >
+              Check
+            </button>
+            <button
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              onClick={() => onPlayerAction?.('call')}
+              disabled={!onPlayerAction || currentBet === 0}
+            >
+              Call ${currentBet}
+            </button>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                className="w-24 px-3 py-3 rounded-lg border-2 border-gray-600 bg-gray-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                placeholder="Amount"
+                min={currentBet * 2}
+                max={currentPlayer.chips}
+                disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2}
+              />
+              <button
+                className="px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                onClick={() => {
+                  const input = document.querySelector('input[type="number"]') as HTMLInputElement;
+                  const amount = parseInt(input.value);
+                  if (amount && amount >= currentBet * 2) {
+                    onPlayerAction?.('raise', amount);
+                  }
+                }}
+                disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2}
+              >
+                Raise
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }; 

@@ -1,4 +1,4 @@
-import { ref, set, update, onValue, off, get, runTransaction } from 'firebase/database';
+import { ref, set, update, onValue, off, get, runTransaction, DatabaseReference } from 'firebase/database';
 import { database } from './firebase';
 import type { Player, Card, PrivatePlayerData, Hand, Table } from '@/types/poker';
 import { Deck } from '@/utils/deck';
@@ -18,29 +18,59 @@ export class GameManager {
     this.deck = new Deck();
   }
 
-  private getCurrentUserId(): string {
+  private getCurrentUserId(): string | null {
     const auth = getAuth();
     const user = auth.currentUser;
     if (!user) {
-      throw new Error('No authenticated user');
+      console.warn('[GameManager] No authenticated user:', {
+        timestamp: new Date().toISOString(),
+        stack: new Error().stack?.split('\n').slice(0, 3).join('\n'),
+      });
+      return null;
     }
     return user.uid;
   }
 
-  private getPrivatePlayerRef(playerId: string) {
-    console.log('[GameManager] Accessing private ref:', {
+  private getPrivatePlayerRef(playerId: string): DatabaseReference {
+    if (!this.tableRef.key) {
+      console.error('[GameManager] Invalid table reference:', {
+        tableId: this.tableRef.key,
+        playerId,
+        timestamp: new Date().toISOString(),
+      });
+      throw new Error('Invalid table reference');
+    }
+
+    if (!playerId) {
+      console.error('[GameManager] Invalid player ID:', {
+        tableId: this.tableRef.key,
+        playerId,
+        timestamp: new Date().toISOString(),
+      });
+      throw new Error('Invalid player ID');
+    }
+
+    const path = `private_player_data/${this.tableRef.key}/${playerId}`;
+    console.log('[GameManager] Getting private player ref:', {
+      tableId: this.tableRef.key,
       playerId,
-      path: `private_player_data/${this.tableRef.key}/${playerId}`,
-      timestamp: new Date().toISOString()
+      path,
+      timestamp: new Date().toISOString(),
     });
-    return ref(database, `private_player_data/${this.tableRef.key}/${playerId}`);
+    
+    return ref(database, path);
   }
 
   public async initialize(): Promise<void> {
+    console.log('[GameManager] Initializing table:', {
+      tableId: this.tableRef.key,
+      timestamp: new Date().toISOString(),
+    });
+
     const initialTable: Table = {
       id: this.tableRef.key!,
       players: [],
-      communityCards: [],
+      communityCards: [], // Explicitly initialize as empty array
       pot: 0,
       currentBet: 0,
       dealerPosition: 0,
@@ -65,7 +95,11 @@ export class GameManager {
     // Validate the initial table state
     const validationErrors = this.validateTableState(initialTable);
     if (validationErrors.length > 0) {
-      console.error('Failed to initialize table with valid state:', validationErrors);
+      console.error('[GameManager] Failed to initialize table with valid state:', {
+        tableId: this.tableRef.key,
+        errors: validationErrors,
+        timestamp: new Date().toISOString(),
+      });
       throw new Error(`Table initialization failed: ${validationErrors.join(', ')}`);
     }
 
@@ -73,6 +107,7 @@ export class GameManager {
     console.log('[GameManager] Table initialized successfully:', {
       tableId: this.tableRef.key,
       timestamp: new Date().toISOString(),
+      initialState: initialTable,
     });
   }
 
@@ -87,7 +122,15 @@ export class GameManager {
     // Required properties validation
     if (!table.id) errors.push('Missing table ID');
     if (!Array.isArray(table.players)) errors.push('Invalid players array');
-    if (!Array.isArray(table.communityCards)) errors.push('Invalid community cards array');
+    if (!Array.isArray(table.communityCards)) {
+      console.error('[GameManager] Invalid community cards:', {
+        tableId: table.id,
+        phase: table.phase,
+        communityCards: table.communityCards,
+        timestamp: new Date().toISOString(),
+      });
+      errors.push('Invalid community cards array');
+    }
     if (typeof table.pot !== 'number') errors.push('Invalid pot amount');
     if (typeof table.currentBet !== 'number') errors.push('Invalid current bet');
     if (typeof table.dealerPosition !== 'number') errors.push('Invalid dealer position');
@@ -122,23 +165,129 @@ export class GameManager {
       errors.push(`Invalid betting round: ${table.bettingRound}. Must be one of: ${validBettingRounds.join(', ')}`);
     }
 
+    // Community cards validation based on phase
+    if (Array.isArray(table.communityCards)) {
+      const expectedCardCounts = {
+        waiting: 0,
+        preflop: 0,
+        flop: 3,
+        turn: 4,
+        river: 5,
+        showdown: 5,
+      };
+
+      const expectedCount = expectedCardCounts[table.phase];
+      if (table.communityCards.length !== expectedCount) {
+        console.error('[GameManager] Unexpected number of community cards for phase:', {
+          tableId: table.id,
+          phase: table.phase,
+          expectedCards: expectedCount,
+          actualCards: table.communityCards.length,
+          communityCards: table.communityCards,
+          timestamp: new Date().toISOString(),
+        });
+        errors.push(`Invalid number of community cards for phase ${table.phase}: expected ${expectedCount}, got ${table.communityCards.length}`);
+      }
+    }
+
     return errors;
   }
 
   public subscribeToTableState(callback: (table: Table) => void): () => void {
     this.tableStateCallback = callback;
+    const auth = getAuth();
+    
+    // Create a unique identifier for this subscription
+    const subscriptionId = Math.random().toString(36).slice(2);
+    
+    console.log('[GameManager] Subscribing to table state:', {
+      subscriptionId,
+      tableId: this.tableRef.key,
+      auth: {
+        currentUser: !!auth.currentUser,
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+      },
+      timestamp: new Date().toISOString(),
+      stack: new Error().stack?.split('\n').slice(0, 3).join('\n'),
+    });
+    
     const unsubscribe = onValue(this.tableRef, (snapshot) => {
       const table = snapshot.val() as Table;
+      const currentAuth = getAuth();
+      
+      console.log('[GameManager] Table state updated:', {
+        subscriptionId,
+        tableId: this.tableRef.key,
+        phase: table?.phase,
+        playerCount: table?.players?.length,
+        activePlayers: table?.players?.filter(p => p.isActive).length,
+        players: table?.players?.map(p => ({
+          id: p.id,
+          name: p.name,
+          isActive: p.isActive,
+          hasFolded: p.hasFolded,
+        })),
+        auth: {
+          currentUser: !!currentAuth.currentUser,
+          userId: currentAuth.currentUser?.uid,
+          email: currentAuth.currentUser?.email,
+        },
+        timestamp: new Date().toISOString(),
+        stack: new Error().stack?.split('\n').slice(0, 3).join('\n'),
+      });
+      
       this.tableStateCallback?.(table);
     });
+    
     return () => {
+      console.log('[GameManager] Unsubscribing from table state:', {
+        subscriptionId,
+        tableId: this.tableRef.key,
+        timestamp: new Date().toISOString(),
+        stack: new Error().stack?.split('\n').slice(0, 3).join('\n'),
+      });
       off(this.tableRef);
       this.tableStateCallback = undefined;
     };
   }
 
   public async getTableState(): Promise<Table | null> {
-    return await this.getTable();
+    try {
+      console.log('[GameManager] Getting table state:', {
+        tableId: this.tableRef.key,
+        timestamp: new Date().toISOString()
+      });
+
+      const snapshot = await get(this.tableRef);
+      const table = snapshot.val() as Table | null;
+
+      if (!table) {
+        console.warn('[GameManager] Table not found:', {
+          tableId: this.tableRef.key,
+          timestamp: new Date().toISOString()
+        });
+        return null;
+      }
+
+      console.log('[GameManager] Retrieved table state:', {
+        tableId: this.tableRef.key,
+        phase: table.phase,
+        playerCount: table.players.length,
+        activePlayers: table.players.filter(p => p.isActive).length,
+        isHandInProgress: table.isHandInProgress,
+        timestamp: new Date().toISOString()
+      });
+
+      return table;
+    } catch (error) {
+      console.error('[GameManager] Error getting table state:', {
+        tableId: this.tableRef.key,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString()
+      });
+      throw error;
+    }
   }
 
   public async addPlayer(player: Omit<Player, 'isActive' | 'hasFolded'>): Promise<void> {
@@ -290,110 +439,299 @@ export class GameManager {
     await update(this.tableRef, updates);
   }
 
-  private async handlePlayerAction(
-    playerId: string, 
-    action: 'fold' | 'call' | 'check' | 'raise',
-    raiseAmount?: number
+  public async handlePlayerAction(
+    playerId: string,
+    action: 'fold' | 'check' | 'call' | 'raise',
+    amount?: number
   ): Promise<void> {
-    const table = await this.getTable();
-    if (!table) {
-      throw new Error('Table not found');
+    // Add request ID for tracing
+    const requestId = Math.random().toString(36).substring(7);
+    console.log('[GameManager] Starting player action:', {
+      requestId,
+      playerId,
+      action,
+      amount,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      // First verify authentication with enhanced error handling
+      const auth = getAuth();
+      const user = auth.currentUser;
+      
+      if (!user) {
+        console.error('[GameManager] Authentication error:', {
+          requestId,
+          playerId,
+          error: 'No authenticated user',
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error('No authenticated user');
+      }
+
+      if (user.uid !== playerId) {
+        console.error('[GameManager] Authorization error:', {
+          requestId,
+          playerId,
+          userId: user.uid,
+          error: 'Not authorized to perform this action',
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error('Not authorized to perform this action');
+      }
+
+      // Get table state with validation
+      const tableSnapshot = await get(this.tableRef);
+      if (!tableSnapshot.exists()) {
+        console.error('[GameManager] Table not found:', {
+          requestId,
+          playerId,
+          tableId: this.tableRef.key,
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error('Table not found');
+      }
+
+      const table = tableSnapshot.val() as Table;
+      
+      // Validate table state
+      if (!table.players || !Array.isArray(table.players)) {
+        console.error('[GameManager] Invalid table state - players array missing:', {
+          requestId,
+          playerId,
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error('Invalid table state - players array missing');
+      }
+
+      // Ensure communityCards is always an array
+      if (!Array.isArray(table.communityCards)) {
+        console.warn('[GameManager] Community cards not initialized:', {
+          requestId,
+          playerId,
+          timestamp: new Date().toISOString(),
+        });
+        table.communityCards = [];
+      }
+
+      // Ensure roundBets is always initialized
+      if (!table.roundBets) {
+        console.warn('[GameManager] Round bets not initialized:', {
+          requestId,
+          playerId,
+          timestamp: new Date().toISOString(),
+        });
+        table.roundBets = {};
+      }
+
+      // Find current player with validation
+      const playerIndex = table.players.findIndex((p) => p.id === playerId);
+      if (playerIndex === -1) {
+        console.error('[GameManager] Player not found in table:', {
+          requestId,
+          playerId,
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error('Player not found in table');
+      }
+
+      const currentPlayer = table.players[playerIndex];
+      
+      // Validate player state
+      if (!currentPlayer.isActive) {
+        console.error('[GameManager] Player is not active:', {
+          requestId,
+          playerId,
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error('Player is not active');
+      }
+
+      if (currentPlayer.hasFolded) {
+        console.error('[GameManager] Player has already folded:', {
+          requestId,
+          playerId,
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error('Player has already folded');
+      }
+
+      // Validate current player's turn
+      if (table.currentPlayerIndex !== playerIndex) {
+        console.error('[GameManager] Not player\'s turn:', {
+          requestId,
+          playerId,
+          currentPlayerIndex: table.currentPlayerIndex,
+          playerIndex,
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error('Not your turn');
+      }
+
+      // Handle the action with enhanced logging
+      console.log('[GameManager] Processing player action:', {
+        requestId,
+        playerId,
+        action,
+        amount,
+        currentBet: table.currentBet,
+        phase: table.phase,
+        timestamp: new Date().toISOString(),
+      });
+
+      switch (action) {
+        case 'fold':
+          await this.handleFold(table, playerId);
+          break;
+        case 'check':
+          await this.handleCheck(table, playerId);
+          break;
+        case 'call':
+          await this.handleCall(table, playerId);
+          break;
+        case 'raise':
+          if (typeof amount !== 'number' || amount <= 0) {
+            console.error('[GameManager] Invalid raise amount:', {
+              requestId,
+              playerId,
+              amount,
+              timestamp: new Date().toISOString(),
+            });
+            throw new Error('Invalid raise amount');
+          }
+          await this.handleRaise(table, playerId, amount);
+          break;
+        default:
+          console.error('[GameManager] Invalid action:', {
+            requestId,
+            playerId,
+            action,
+            timestamp: new Date().toISOString(),
+          });
+          throw new Error('Invalid action');
+      }
+
+      console.log('[GameManager] Successfully processed player action:', {
+        requestId,
+        playerId,
+        action,
+        amount,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('[GameManager] Error handling player action:', {
+        requestId,
+        playerId,
+        action,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+        } : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
     }
-    
+  }
+
+  private async handleFold(table: Table, playerId: string): Promise<void> {
+    const updatedPlayers = table.players.map(p =>
+      p.id === playerId ? { ...p, hasFolded: true } : p
+    );
+
+    const activePlayers = updatedPlayers.filter(p => !p.hasFolded && p.isActive);
+
+    // If only one player remains, they win the pot
+    if (activePlayers.length === 1) {
+      const winner = activePlayers[0];
+      const updatedPlayersWithWinner = updatedPlayers.map(p =>
+        p.id === winner.id ? { ...p, chips: p.chips + table.pot } : p
+      );
+
+      await update(this.tableRef, {
+        players: updatedPlayersWithWinner,
+        pot: 0,
+        phase: 'waiting',
+        lastAction: 'fold',
+        lastActivePlayer: table.players.find(p => p.id === playerId)?.name,
+        lastActionTimestamp: Date.now(),
+      });
+
+      // Start a new hand after a delay
+      setTimeout(async () => {
+        await this.startNewHand();
+      }, 3000);
+      return;
+    }
+
+    await update(this.tableRef, {
+      players: updatedPlayers,
+      lastAction: 'fold',
+      lastActivePlayer: table.players.find(p => p.id === playerId)?.name,
+      lastActionTimestamp: Date.now(),
+    });
+
+    await this.moveToNextPlayer(table, updatedPlayers);
+  }
+
+  private async handleCheck(table: Table, playerId: string): Promise<void> {
+    if (table.currentBet > 0) {
+      throw new Error('Cannot check when there is a bet');
+    }
+
+    // Add the check action to roundBets
+    const roundBets = {
+      ...table.roundBets,
+      [playerId]: 0,  // Record that this player has checked
+    };
+
+    await update(this.tableRef, {
+      roundBets,
+      lastAction: 'check',
+      lastActivePlayer: table.players.find(p => p.id === playerId)?.name,
+      lastActionTimestamp: Date.now(),
+    });
+
+    await this.moveToNextPlayer(table, table.players, roundBets);
+  }
+
+  private async handleCall(table: Table, playerId: string): Promise<void> {
     const currentPlayer = table.players.find(p => p.id === playerId);
     if (!currentPlayer) {
       throw new Error('Player not found');
     }
 
-    if (Date.now() - table.lastActionTimestamp > table.turnTimeLimit) {
-      // Auto-fold on timeout
-      await this.handleFold(playerId);
-      return;
-    }
-
     const currentPlayerBet = table.roundBets[playerId] || 0;
-
-    switch (action) {
-      case 'fold':
-        await this.handleFold(playerId);
-        await update(this.tableRef, {
-          lastAction: 'fold',
-          lastActivePlayer: currentPlayer.name,
-          lastActionTimestamp: Date.now(),
-        });
-        break;
-      case 'check':
-        if (table.currentBet > currentPlayerBet) {
-          throw new Error('Cannot check when there is a bet to call');
-        }
-        await update(this.tableRef, {
-          lastAction: 'check',
-          lastActivePlayer: currentPlayer.name,
-          lastActionTimestamp: Date.now(),
-        });
-        await this.moveToNextPlayer(table, table.players);
-        break;
-      case 'call':
-        const callAmount = table.currentBet - currentPlayerBet;
-        if (callAmount > currentPlayer.chips) {
-          throw new Error('Not enough chips to call');
-        }
-
-        const updatedPlayers = table.players.map(p =>
-          p.id === playerId ? { ...p, chips: p.chips - callAmount } : p
-        );
-
-        const roundBets = {
-          ...table.roundBets,
-          [playerId]: table.currentBet,
-        };
-
-        const newPot = table.pot + callAmount;
-
-        await update(this.tableRef, {
-          players: updatedPlayers,
-          pot: newPot,
-          roundBets,
-          lastAction: 'call',
-          lastActivePlayer: currentPlayer.name,
-          lastActionTimestamp: Date.now(),
-        });
-
-        await this.moveToNextPlayer(table, updatedPlayers, roundBets);
-        break;
-      case 'raise':
-        if (!raiseAmount || raiseAmount < table.minRaise) {
-          throw new Error('Invalid raise amount');
-        }
-        await this.handleRaise(playerId, raiseAmount);
-        await update(this.tableRef, {
-          lastAction: 'raise',
-          lastActivePlayer: currentPlayer.name,
-          lastActionTimestamp: Date.now(),
-        });
-        break;
-      default:
-        throw new Error('Invalid action');
+    const callAmount = table.currentBet - currentPlayerBet;
+    if (callAmount > currentPlayer.chips) {
+      throw new Error('Not enough chips to call');
     }
-  }
 
-  private async handleFold(playerId: string): Promise<void> {
-    const table = await this.getTable();
-    if (!table) {
-      throw new Error('Table not found');
-    }
-    
-    const updatedPlayers = table.players.map(player =>
-      player.id === playerId ? { ...player, hasFolded: true } : player
+    const updatedPlayers = table.players.map(p =>
+      p.id === playerId ? { ...p, chips: p.chips - callAmount } : p
     );
 
-    await this.moveToNextPlayer(table, updatedPlayers);
+    const roundBets = {
+      ...table.roundBets,
+      [playerId]: table.currentBet,
+    };
+
+    const newPot = table.pot + callAmount;
+
+    await update(this.tableRef, {
+      players: updatedPlayers,
+      pot: newPot,
+      roundBets,
+      lastAction: 'call',
+      lastActivePlayer: currentPlayer.name,
+      lastActionTimestamp: Date.now(),
+    });
+
+    await this.moveToNextPlayer(table, updatedPlayers, roundBets);
   }
 
-  private async handleRaise(playerId: string, raiseAmount: number): Promise<void> {
-    const table = await this.getTable();
-    if (!table) {
-      throw new Error('Table not found');
+  private async handleRaise(table: Table, playerId: string, raiseAmount: number): Promise<void> {
+    if (raiseAmount <= table.currentBet) {
+      throw new Error('Raise amount must be greater than current bet');
     }
 
     const currentPlayer = table.players.find(p => p.id === playerId);
@@ -407,10 +745,6 @@ export class GameManager {
 
     if (additionalBetRequired > currentPlayer.chips) {
       throw new Error('Not enough chips to raise');
-    }
-
-    if (raiseAmount <= table.currentBet) {
-      throw new Error('Raise amount must be greater than current bet');
     }
 
     const updatedPlayers = table.players.map(p =>
@@ -442,6 +776,34 @@ export class GameManager {
     return player.isActive && !player.hasFolded && player.chips === 0;
   }
 
+  private checkAllPlayersActed(table: Table, updates: Partial<Table>): boolean {
+    const activePlayers = table.players.filter(p => p.isActive && !p.hasFolded && p.chips > 0);
+    const currentBet = updates.currentBet ?? table.currentBet;
+    const roundBets = updates.roundBets ?? table.roundBets ?? {};
+    
+    // If it's a checking round (currentBet === 0), check if all active players have acted
+    if (currentBet === 0) {
+      // In a checking round, a player has acted if they have an entry in roundBets
+      const allPlayersHaveChecked = activePlayers.every(p => typeof roundBets[p.id] === 'number');
+      
+      console.log('[GameManager] Checking round status:', {
+        activePlayers: activePlayers.map(p => ({ id: p.id, hasChecked: typeof roundBets[p.id] === 'number' })),
+        allPlayersHaveChecked,
+        roundBets,
+        timestamp: new Date().toISOString(),
+      });
+      
+      return allPlayersHaveChecked;
+    }
+    
+    // For betting rounds, check if all players have matched the current bet or are all-in
+    return activePlayers.every(p => {
+      const playerBet = roundBets[p.id];
+      return (typeof playerBet === 'number' && playerBet === currentBet) || // Player has matched the current bet
+             (p.chips === 0 && typeof playerBet === 'number'); // Player is all-in and has acted
+    });
+  }
+
   private async moveToNextPlayer(
     table: Table,
     updatedPlayers: Player[],
@@ -450,7 +812,9 @@ export class GameManager {
     newMinRaise?: number
   ): Promise<void> {
     const activePlayers = updatedPlayers.filter(p => p.isActive && !p.hasFolded);
-    const currentRoundBets = roundBets || table.roundBets;
+    
+    // Ensure roundBets is always initialized
+    const currentRoundBets = roundBets || table.roundBets || {};
     
     if (activePlayers.length === 1) {
       // Round over - one player remains
@@ -502,11 +866,17 @@ export class GameManager {
 
     // Check if betting round is complete
     const allPlayersActed = this.checkAllPlayersActed(table, updates);
+    
     if (allPlayersActed) {
-      // Reset betting-related values for the next phase
-      updates.currentBet = 0;
-      updates.roundBets = {};
-      updates.minRaise = table.bigBlind;
+      // First update the current state
+      await update(this.tableRef, updates);
+
+      // Then handle phase transition in a separate update
+      const phaseUpdates: Partial<Table> = {
+        currentBet: 0,
+        roundBets: {},
+        minRaise: table.bigBlind,
+      };
 
       // Determine next phase and deal appropriate cards
       switch (table.phase) {
@@ -515,8 +885,8 @@ export class GameManager {
           if (!flop) {
             throw new Error('Not enough cards in deck');
           }
-          updates.phase = 'flop';
-          updates.communityCards = flop;
+          phaseUpdates.phase = 'flop';
+          phaseUpdates.communityCards = flop;
           break;
 
         case 'flop':
@@ -524,8 +894,8 @@ export class GameManager {
           if (!turnCard) {
             throw new Error('Not enough cards in deck');
           }
-          updates.phase = 'turn';
-          updates.communityCards = [...table.communityCards, turnCard];
+          phaseUpdates.phase = 'turn';
+          phaseUpdates.communityCards = table.communityCards ? [...table.communityCards, turnCard] : [turnCard];
           break;
 
         case 'turn':
@@ -533,8 +903,8 @@ export class GameManager {
           if (!riverCard) {
             throw new Error('Not enough cards in deck');
           }
-          updates.phase = 'river';
-          updates.communityCards = [...table.communityCards, riverCard];
+          phaseUpdates.phase = 'river';
+          phaseUpdates.communityCards = table.communityCards ? [...table.communityCards, riverCard] : [riverCard];
           break;
 
         case 'river':
@@ -545,21 +915,27 @@ export class GameManager {
       // Reset betting to player after dealer for the new phase
       const activePlayers = updatedPlayers.filter(p => p.isActive && !p.hasFolded && p.chips > 0);
       if (activePlayers.length > 1) {
-        const firstToActIndex = (table.dealerPosition + 1) % activePlayers.length;
-        updates.currentPlayerIndex = firstToActIndex;
+        const dealerIndex = table.dealerPosition;
+        let firstToActIndex = (dealerIndex + 1) % table.players.length;
+        
+        // Find the next active player after the dealer
+        while (
+          !table.players[firstToActIndex].isActive ||
+          table.players[firstToActIndex].hasFolded ||
+          table.players[firstToActIndex].chips === 0
+        ) {
+          firstToActIndex = (firstToActIndex + 1) % table.players.length;
+        }
+        
+        phaseUpdates.currentPlayerIndex = firstToActIndex;
       }
+
+      // Update the phase and community cards in a separate operation
+      await update(this.tableRef, phaseUpdates);
+    } else {
+      // If betting round is not complete, just update the current state
+      await update(this.tableRef, updates);
     }
-
-    await update(this.tableRef, updates);
-  }
-
-  private checkAllPlayersActed(table: Table, updates: Partial<Table>): boolean {
-    const roundBets = updates.roundBets || table.roundBets;
-    const currentBet = updates.currentBet || table.currentBet;
-    
-    return table.players
-      .filter(p => p.isActive && !p.hasFolded && p.chips > 0)
-      .every(p => roundBets[p.id] === currentBet || p.chips === 0);
   }
 
   private async moveToNextPhase(table: Table, updates: Partial<Table>): Promise<void> {
@@ -603,106 +979,139 @@ export class GameManager {
       throw new Error('Not enough players to start the game');
     }
 
-    await update(this.tableRef, { gameStarted: true });
+    // First set gameStarted and phase to waiting
+    await update(this.tableRef, { 
+      gameStarted: true,
+      phase: 'waiting',
+      isHandInProgress: false 
+    });
+
+    // Then start the first hand
     await this.startNewHand();
   }
 
   public async startNewHand(): Promise<void> {
-    const table = await this.getTable();
-    if (!this.isTable(table)) {
+    console.log('[GameManager] Starting new hand');
+    
+    const tableSnapshot = await get(this.tableRef);
+    const table = tableSnapshot.val() as Table;
+
+    if (!table) {
+      console.error('[GameManager] Table not found when starting new hand');
       throw new Error('Table not found');
     }
 
-    // Only proceed if game has started or if this is called from startGame
-    const calledFromStartGame = !table.gameStarted;
-    if (!table.gameStarted && !calledFromStartGame) {
-      throw new Error('Game has not been started');
-    }
-
     // Reset the deck
-    this.deck = new Deck();
-    
-    // After this point, table is guaranteed to be non-null
-    const tableSnapshot = table;
-    
-    console.log('[GameManager] Starting new hand:', {
-      tableId: this.tableRef.key,
-      activePlayers: tableSnapshot.players.filter(p => p.isActive).length,
-      timestamp: new Date().toISOString()
-    });
-    
-    // Deal hole cards to active players and store them in private refs
-    const updatedPlayers = tableSnapshot.players.map((player) => ({
+    this.deck.reset();
+    console.log('[GameManager] Deck reset and shuffled');
+
+    // Get active players and update their states
+    const updatedPlayers = table.players.map(player => ({
       ...player,
       hasFolded: false,
     }));
 
-    // Deal and store private cards
-    for (const player of tableSnapshot.players) {
-      if (player.isActive) {
-        console.log('[GameManager] Dealing cards to player:', {
-          playerId: player.id,
-          isActive: player.isActive,
-          timestamp: new Date().toISOString()
-        });
-        
-        const cards = this.deck.dealHoleCards();
-        if (!cards) {
-          console.error('[GameManager] Failed to deal cards:', {
-            playerId: player.id,
-            reason: 'Not enough cards in deck',
-            timestamp: new Date().toISOString()
-          });
-          throw new Error('Not enough cards in deck');
-        }
-        
-        console.log('[GameManager] Storing private cards:', {
-          playerId: player.id,
-          timestamp: new Date().toISOString(),
-          hasCards: !!cards,
-          cardCount: cards.length,
-          path: `private_player_data/${this.tableRef.key}/${player.id}`
-        });
-        
-        // Store hole cards in private reference
-        const privateData: PrivatePlayerData = {
-          holeCards: cards,
-          lastUpdated: Date.now(),
-        };
-        
+    // Clear all private card data before dealing new cards
+    console.log('[GameManager] Clearing private data for all players');
+    await Promise.all(
+      updatedPlayers.map(async (player) => {
         try {
-          await set(this.getPrivatePlayerRef(player.id), privateData);
-          console.log('[GameManager] Successfully stored private cards:', {
+          const privateRef = this.getPrivatePlayerRef(player.id);
+          await set(privateRef, null);
+          console.log('[GameManager] Cleared private data for player:', {
             playerId: player.id,
             timestamp: new Date().toISOString(),
-            privateRefPath: `private_player_data/${this.tableRef.key}/${player.id}`
           });
         } catch (error) {
-          console.error('[GameManager] Failed to store private cards:', {
+          console.error('[GameManager] Error clearing private data:', {
             playerId: player.id,
             error: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
           });
-          // Reset hand in progress flag on error
-          await update(this.tableRef, { isHandInProgress: false });
+        }
+      })
+    );
+
+    // Update table state before dealing cards
+    const updates: Partial<Table> = {
+      isHandInProgress: true,
+      phase: 'preflop',
+      players: updatedPlayers,
+      communityCards: [],
+      pot: 0,
+      currentBet: 0,
+      minRaise: table.bigBlind || 20,
+      roundBets: {},
+      lastAction: 'New hand started',
+      lastActionTimestamp: Date.now()
+    };
+
+    // Set hand in progress and phase to preflop before dealing cards
+    console.log('[GameManager] Updating table state for new hand');
+    await update(this.tableRef, updates);
+
+    // Deal and store private cards
+    for (const player of updatedPlayers) {
+      if (player.isActive) {
+        try {
+          const cards = this.deck.dealHoleCards();
+          if (!cards) {
+            console.error('[GameManager] Not enough cards in deck for player:', {
+              playerId: player.id,
+              timestamp: new Date().toISOString(),
+            });
+            throw new Error('Not enough cards in deck');
+          }
+          
+          const privateRef = this.getPrivatePlayerRef(player.id);
+          const privateData: PrivatePlayerData = {
+            holeCards: cards,
+            lastUpdated: Date.now()
+          };
+          
+          console.log('[GameManager] Storing private cards for player:', {
+            playerId: player.id,
+            timestamp: new Date().toISOString(),
+          });
+
+          // Retry up to 3 times with exponential backoff
+          let stored = false;
+          for (let i = 0; i < 3 && !stored; i++) {
+            try {
+              await set(privateRef, privateData);
+              stored = true;
+              console.log('[GameManager] Successfully stored private cards for player:', {
+                playerId: player.id,
+                attempt: i + 1,
+                timestamp: new Date().toISOString(),
+              });
+            } catch (error) {
+              console.error('[GameManager] Error storing private cards (attempt ' + (i + 1) + '):', {
+                playerId: player.id,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                timestamp: new Date().toISOString(),
+              });
+              if (i < 2) {
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+              }
+            }
+          }
+
+          if (!stored) {
+            throw new Error('Failed to store private cards after 3 attempts');
+          }
+        } catch (error) {
+          console.error('[GameManager] Fatal error dealing cards to player:', {
+            playerId: player.id,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            timestamp: new Date().toISOString(),
+          });
           throw error;
         }
       }
     }
 
-    try {
-      await this.initializeRound();
-      await update(this.tableRef, { players: updatedPlayers });
-      
-      console.log('[GameManager] Completed new hand setup:', {
-        tableId: this.tableRef.key,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      // Reset hand in progress flag on error
-      await update(this.tableRef, { isHandInProgress: false });
-      throw error;
-    }
+    console.log('[GameManager] New hand setup completed');
   }
 
   public async dealFlop(): Promise<void> {
@@ -778,75 +1187,283 @@ export class GameManager {
   }
 
   private async evaluatePlayerHands(table: Table): Promise<Array<{ playerId: string; hand: Hand }>> {
+    console.log('[GameManager] Starting hand evaluation:', {
+      tableId: this.tableRef.key,
+      phase: table.phase,
+      timestamp: new Date().toISOString(),
+      communityCards: table.communityCards,
+    });
+
+    // Skip hand evaluation during pre-flop
+    if (table.phase === 'preflop') {
+      console.log('[GameManager] Skipping hand evaluation in preflop phase');
+      return [];
+    }
+
     const activePlayers = table.players.filter((p) => p.isActive && !p.hasFolded);
+    console.log('[GameManager] Active players for hand evaluation:', {
+      count: activePlayers.length,
+      playerIds: activePlayers.map(p => p.id),
+      timestamp: new Date().toISOString(),
+    });
+    
+    // Ensure communityCards is initialized as an array
+    if (!Array.isArray(table.communityCards)) {
+      console.error('[GameManager] Community cards not properly initialized:', {
+        tableId: this.tableRef.key,
+        phase: table.phase,
+        timestamp: new Date().toISOString(),
+        communityCards: table.communityCards,
+      });
+      table.communityCards = [];
+    }
     
     // Get all hole cards and evaluate hands
     const evaluations = await Promise.all(
       activePlayers.map(async (player) => {
+        console.log('[GameManager] Evaluating hand for player:', {
+          playerId: player.id,
+          playerName: player.name,
+          timestamp: new Date().toISOString(),
+        });
+
         const holeCards = await this.getPlayerHoleCards(player.id);
-        if (!holeCards) {
+        if (!holeCards || !Array.isArray(holeCards) || holeCards.length !== 2) {
+          console.error('[GameManager] Invalid hole cards:', {
+            playerId: player.id,
+            holeCards,
+            timestamp: new Date().toISOString(),
+          });
           return null;
         }
-        
-        const hand = findBestHand(holeCards, table.communityCards);
-        return {
+
+        console.log('[GameManager] Player hole cards:', {
           playerId: player.id,
-          hand,
-        };
+          playerName: player.name,
+          holeCards,
+          timestamp: new Date().toISOString(),
+        });
+
+        try {
+          const hand = findBestHand(holeCards, table.communityCards);
+          console.log('[GameManager] Player hand evaluation result:', {
+            playerId: player.id,
+            playerName: player.name,
+            handRank: hand.rank,
+            handValue: hand.value,
+            handDescription: hand.description,
+            timestamp: new Date().toISOString(),
+          });
+          return {
+            playerId: player.id,
+            hand,
+          };
+        } catch (error) {
+          console.error('[GameManager] Error evaluating hand:', {
+            playerId: player.id,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            timestamp: new Date().toISOString(),
+          });
+          return null;
+        }
       })
     );
 
     // Filter out null results and sort by hand value
-    return evaluations
+    const validEvaluations = evaluations
       .filter((evaluation): evaluation is { playerId: string; hand: Hand } => evaluation !== null)
       .sort((a, b) => b.hand.value - a.hand.value);
+
+    console.log('[GameManager] Final hand evaluation results:', {
+      evaluations: validEvaluations.map(e => ({
+        playerId: e.playerId,
+        playerName: table.players.find(p => p.id === e.playerId)?.name,
+        handRank: e.hand.rank,
+        handValue: e.hand.value,
+        handDescription: e.hand.description,
+      })),
+      timestamp: new Date().toISOString(),
+    });
+
+    return validEvaluations;
   }
 
   private async getWinners(table: Table): Promise<string[]> {
+    console.log('[GameManager] Starting winner determination:', {
+      tableId: this.tableRef.key,
+      phase: table.phase,
+      timestamp: new Date().toISOString(),
+    });
+
     const activePlayers = table.players.filter(p => p.isActive && !p.hasFolded);
+    console.log('[GameManager] Active players for winner determination:', {
+      count: activePlayers.length,
+      players: activePlayers.map(p => ({ id: p.id, name: p.name })),
+      timestamp: new Date().toISOString(),
+    });
     
     // If only one player remains, they are the winner
     if (activePlayers.length <= 1) {
+      console.log('[GameManager] Single player winner:', {
+        winner: activePlayers[0]?.id,
+        winnerName: activePlayers[0]?.name,
+        reason: 'Last player remaining',
+        timestamp: new Date().toISOString(),
+      });
       return activePlayers.map(p => p.id);
     }
+
+    // Skip winner evaluation during pre-flop
+    if (table.phase === 'preflop') {
+      console.log('[GameManager] Skipping winner evaluation in preflop phase');
+      return [];
+    }
+
+    // Ensure communityCards is initialized as an array
+    if (!Array.isArray(table.communityCards)) {
+      console.error('[GameManager] Community cards not properly initialized:', {
+        tableId: this.tableRef.key,
+        phase: table.phase,
+        timestamp: new Date().toISOString(),
+        communityCards: table.communityCards,
+      });
+      table.communityCards = [];
+    }
+
+    console.log('[GameManager] Community cards for winner determination:', {
+      cards: table.communityCards,
+      timestamp: new Date().toISOString(),
+    });
 
     // Get all hole cards and evaluate hands for active players
     const playerHandRankings = await Promise.all(
       activePlayers.map(async (player) => {
+        console.log('[GameManager] Evaluating hand for winner determination:', {
+          playerId: player.id,
+          playerName: player.name,
+          timestamp: new Date().toISOString(),
+        });
+
         const holeCards = await this.getPlayerHoleCards(player.id);
-        if (!holeCards) {
+        if (!holeCards || !Array.isArray(holeCards) || holeCards.length !== 2) {
+          console.error('[GameManager] Invalid hole cards for winner evaluation:', {
+            playerId: player.id,
+            holeCards,
+            timestamp: new Date().toISOString(),
+          });
           return null;
         }
-        const bestHand = findBestHand(holeCards, table.communityCards);
-        return {
+
+        console.log('[GameManager] Player hole cards for winner determination:', {
           playerId: player.id,
-          handValue: bestHand.value,
-          handRank: bestHand.rank,
-        };
+          playerName: player.name,
+          holeCards,
+          timestamp: new Date().toISOString(),
+        });
+
+        try {
+          const bestHand = findBestHand(holeCards, table.communityCards);
+          console.log('[GameManager] Player best hand for winner determination:', {
+            playerId: player.id,
+            playerName: player.name,
+            handRank: bestHand.rank,
+            handValue: bestHand.value,
+            handDescription: bestHand.description,
+            timestamp: new Date().toISOString(),
+          });
+          return {
+            playerId: player.id,
+            handValue: bestHand.value,
+            handRank: bestHand.rank,
+            handDescription: bestHand.description,
+          };
+        } catch (error) {
+          console.error('[GameManager] Error evaluating hand for winner:', {
+            playerId: player.id,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            timestamp: new Date().toISOString(),
+          });
+          return null;
+        }
       })
     );
 
     // Filter out null results and find highest hand value
     const validRankings = playerHandRankings.filter((ranking): ranking is NonNullable<typeof ranking> => ranking !== null);
-    const highestHandValue = Math.max(...validRankings.map(h => h.handValue));
+    
+    if (validRankings.length === 0) {
+      console.error('[GameManager] No valid hand rankings found:', {
+        tableId: this.tableRef.key,
+        phase: table.phase,
+        timestamp: new Date().toISOString(),
+      });
+      return [];
+    }
 
-    // Return all players with the highest hand value (handles split pots)
-    return validRankings
-      .filter(h => h.handValue === highestHandValue)
-      .map(h => h.playerId);
+    const highestValue = Math.max(...validRankings.map(r => r.handValue));
+    const winners = validRankings
+      .filter(r => r.handValue === highestValue)
+      .map(r => r.playerId);
+
+    console.log('[GameManager] Winner determination results:', {
+      winners: winners.map(winnerId => ({
+        id: winnerId,
+        name: table.players.find(p => p.id === winnerId)?.name,
+        hand: validRankings.find(r => r.playerId === winnerId),
+      })),
+      allHands: validRankings.map(r => ({
+        playerId: r.playerId,
+        playerName: table.players.find(p => p.id === r.playerId)?.name,
+        handRank: r.handRank,
+        handValue: r.handValue,
+        handDescription: r.handDescription,
+      })),
+      timestamp: new Date().toISOString(),
+    });
+
+    return winners;
   }
 
   private async endRound(table: Table, players: Player[]): Promise<void> {
+    console.log('[GameManager] Starting end of round:', {
+      tableId: this.tableRef.key,
+      phase: table.phase,
+      pot: table.pot,
+      timestamp: new Date().toISOString(),
+    });
+
     const winners = await this.getWinners(table);
+    console.log('[GameManager] Round winners determined:', {
+      winners: winners.map(winnerId => ({
+        id: winnerId,
+        name: table.players.find(p => p.id === winnerId)?.name,
+      })),
+      timestamp: new Date().toISOString(),
+    });
     
     // Calculate split pot amount, rounded to 2 decimal places
     const splitPotAmount = Math.floor((table.pot / winners.length) * 100) / 100;
+    console.log('[GameManager] Split pot calculation:', {
+      totalPot: table.pot,
+      numberOfWinners: winners.length,
+      splitPotAmount,
+      timestamp: new Date().toISOString(),
+    });
     
     const updatedPlayers = players.map(player => {
       if (winners.includes(player.id)) {
+        const newChips = player.chips + splitPotAmount;
+        console.log('[GameManager] Updating winner chips:', {
+          playerId: player.id,
+          playerName: player.name,
+          oldChips: player.chips,
+          wonAmount: splitPotAmount,
+          newChips,
+          timestamp: new Date().toISOString(),
+        });
         return {
           ...player,
-          chips: player.chips + splitPotAmount,
+          chips: newChips,
         };
       }
       return player;
@@ -889,45 +1506,48 @@ export class GameManager {
 
   public async getPlayerHoleCards(playerId: string): Promise<Card[] | null> {
     const requestingUserId = this.getCurrentUserId();
-    console.log('[GameManager] getPlayerHoleCards request:', {
-      requestingUserId,
-      requestedPlayerId: playerId,
-      timestamp: new Date().toISOString(),
-      privateRefPath: `private_player_data/${this.tableRef.key}/${playerId}`
-    });
     
     if (!requestingUserId) {
-      console.warn('[GameManager] No requesting user ID available:', {
-        timestamp: new Date().toISOString()
+      console.warn('[GameManager] Cannot get hole cards - no authenticated user:', {
+        playerId,
+        timestamp: new Date().toISOString(),
       });
       return null;
     }
-    
-    const snapshot = await get(this.getPrivatePlayerRef(playerId));
-    const privateData = snapshot.val() as PrivatePlayerData | null;
-    
-    console.log('[GameManager] getPlayerHoleCards response:', {
-      requestingUserId,
-      requestedPlayerId: playerId,
-      hasData: !!privateData,
-      dataTimestamp: privateData?.lastUpdated,
-      currentTimestamp: Date.now(),
-      timestamp: new Date().toISOString(),
-      snapshotPath: snapshot.ref.toString(),
-      retrievedCards: privateData?.holeCards || null
-    });
     
     // Security check - only return cards if requesting user is the player
     if (requestingUserId !== playerId) {
-      console.warn('[GameManager] Unauthorized hole cards access attempt:', {
+      console.warn('[GameManager] Cannot get hole cards - user not authorized:', {
+        playerId,
         requestingUserId,
-        requestedPlayerId: playerId,
+        timestamp: new Date().toISOString(),
+      });
+      return null;
+    }
+
+    try {
+      const privateRef = this.getPrivatePlayerRef(playerId);
+      const snapshot = await get(privateRef);
+      const privateData = snapshot.val() as PrivatePlayerData | null;
+      
+      if (!privateData || !Array.isArray(privateData.holeCards) || privateData.holeCards.length !== 2) {
+        console.warn('[GameManager] Invalid or missing hole cards:', {
+          playerId,
+          privateData,
+          timestamp: new Date().toISOString(),
+        });
+        return null;
+      }
+      
+      return privateData.holeCards;
+    } catch (error) {
+      console.error('[GameManager] Error getting player hole cards:', {
+        playerId,
+        error: error instanceof Error ? error.message : 'Unknown error',
         timestamp: new Date().toISOString()
       });
       return null;
     }
-    
-    return privateData?.holeCards || null;
   }
 
   public async createTable(

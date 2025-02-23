@@ -201,6 +201,15 @@ export const evaluateHand = (cards: Card[]): Hand => {
 };
 
 export const findBestHand = (holeCards: Card[], communityCards: Card[]): Hand => {
+  // Ensure communityCards is initialized
+  if (!communityCards || !Array.isArray(communityCards)) {
+    console.error('[HandEvaluator] Community cards not properly initialized:', {
+      timestamp: new Date().toISOString(),
+      communityCards,
+    });
+    communityCards = [];
+  }
+
   const allCards = [...holeCards, ...communityCards];
   if (allCards.length < 5) {
     throw new Error('Not enough cards to form a hand');

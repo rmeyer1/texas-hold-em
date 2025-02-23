@@ -58,8 +58,7 @@ export const TablePageClient = ({ tableId, initialData }: TablePageClientProps):
       await gameManager.startGame();
     } catch (error) {
       console.error('[TablePageClient] Failed to start game:', error);
-    } finally {
-      setIsStartingGame(false);
+      setIsStartingGame(false); // Reset starting state on error
     }
   };
 
@@ -123,16 +122,47 @@ export const TablePageClient = ({ tableId, initialData }: TablePageClientProps):
     };
 
     const unsubscribe = gameManager.subscribeToTableState((table) => {
+      console.log('[TablePageClient] Table state update:', {
+        tableId,
+        phase: table?.phase,
+        currentPlayerIndex: table?.currentPlayerIndex,
+        playerCount: table?.players?.length,
+        activePlayerCount: table?.players?.filter(player => player.isActive).length,
+        timestamp: new Date().toISOString(),
+        stack: new Error().stack?.split('\n').slice(0, 3).join('\n'),
+      });
+
       setTableState(table);
       if (table?.players && table.currentPlayerIndex >= 0) {
-        setCurrentPlayerId(table.players[table.currentPlayerIndex].id);
+        const newCurrentPlayerId = table.players[table.currentPlayerIndex].id;
+        console.log('[TablePageClient] Updating current player:', {
+          previousId: currentPlayerId,
+          newId: newCurrentPlayerId,
+          playerIndex: table.currentPlayerIndex,
+          timestamp: new Date().toISOString(),
+        });
+        setCurrentPlayerId(newCurrentPlayerId);
       }
 
       // Check for active players (filtering out inactive ones)
       const activePlayers = table?.players?.filter(player => player.isActive) ?? [];
       const activePlayerCount = activePlayers.length;
       const hasEnough = activePlayerCount >= 2;
+      
+      console.log('[TablePageClient] Active player check:', {
+        totalPlayers: table?.players?.length,
+        activeCount: activePlayerCount,
+        hasEnough,
+        phase: table?.phase,
+        timestamp: new Date().toISOString(),
+      });
+
       setHasEnoughPlayers(hasEnough);
+
+      // Reset starting game state if we're not in waiting phase
+      if (table?.phase !== 'waiting') {
+        setIsStartingGame(false);
+      }
     });
 
     initializeGame();
@@ -153,49 +183,63 @@ export const TablePageClient = ({ tableId, initialData }: TablePageClientProps):
           actionTaken = true;
           break;
         case 'check':
-          // No bet needed for check
+          await gameManager.handlePlayerAction(currentPlayerId, 'check');
+          actionTaken = true;
           break;
         case 'call':
-          await gameManager.placeBet(currentPlayerId, tableState.currentBet);
+          await gameManager.callBet(currentPlayerId);
           actionTaken = true;
           break;
         case 'raise':
           if (amount) {
-            await gameManager.placeBet(currentPlayerId, amount);
+            await gameManager.raiseBet(currentPlayerId, amount);
             actionTaken = true;
           }
           break;
       }
 
       if (actionTaken) {
+        // Wait a short moment for the action to be processed
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         // Get updated table state after action
         const updatedState = await gameManager.getTableState();
         if (!updatedState) return;
 
-        try {
-          switch (updatedState.phase) {
-            case 'preflop':
-              await gameManager.dealFlop();
-              break;
-            case 'flop':
-              await gameManager.dealTurn();
-              break;
-            case 'turn':
-              await gameManager.dealRiver();
-              break;
-            case 'river':
-              // Start a new hand after a delay
-              setTimeout(async () => {
-                try {
-                  await gameManager.startNewHand();
-                } catch (error) {
-                  console.error('[TablePageClient] Error starting new hand after river:', error);
-                }
-              }, 3000);
-              break;
+        // Only proceed with phase transitions if all players have acted
+        const allPlayersActed = updatedState.players
+          .filter(p => p.isActive && !p.hasFolded && p.chips > 0)
+          .every(p => 
+            (updatedState.roundBets[p.id] === updatedState.currentBet) || 
+            p.chips === 0
+          );
+
+        if (allPlayersActed) {
+          try {
+            switch (updatedState.phase) {
+              case 'preflop':
+                await gameManager.dealFlop();
+                break;
+              case 'flop':
+                await gameManager.dealTurn();
+                break;
+              case 'turn':
+                await gameManager.dealRiver();
+                break;
+              case 'river':
+                // Start a new hand after a delay
+                setTimeout(async () => {
+                  try {
+                    await gameManager.startNewHand();
+                  } catch (error) {
+                    console.error('[TablePageClient] Error starting new hand after river:', error);
+                  }
+                }, 3000);
+                break;
+            }
+          } catch (error) {
+            console.error('[TablePageClient] Error advancing game phase:', error);
           }
-        } catch (error) {
-          console.error('[TablePageClient] Error advancing game phase:', error);
         }
       }
     } catch (error) {
@@ -223,7 +267,7 @@ export const TablePageClient = ({ tableId, initialData }: TablePageClientProps):
             Current players: {tableState.players.length}
           </p>
         </div>
-      ) : !tableState.phase ? (
+      ) : tableState.phase === 'waiting' ? (
         <div className="bg-gray-800 rounded-lg p-6 mb-4">
           <button
             onClick={handleStartGame}
@@ -245,6 +289,7 @@ export const TablePageClient = ({ tableId, initialData }: TablePageClientProps):
           onPlayerAction={handlePlayerAction}
           onStartGame={tableState.phase === 'waiting' ? handleStartGame : undefined}
           isStartingGame={isStartingGame}
+          hasEnoughPlayers={hasEnoughPlayers}
         />
       )}
     </div>

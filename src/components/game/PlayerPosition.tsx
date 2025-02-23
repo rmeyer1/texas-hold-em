@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Player, Table, Card } from '@/types/poker';
 import { Card as CardComponent } from './Card';
 import { GameManager } from '@/services/gameManager';
 import { getAuth } from 'firebase/auth';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface PlayerPositionProps {
   player: Player;
@@ -25,125 +26,196 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
   const [showCards, setShowCards] = useState(false);
   const [isAuthenticatedPlayer, setIsAuthenticatedPlayer] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const { user } = useAuth(); // Use the auth context instead of direct Firebase auth
+  const retryCount = useRef(0);
+  const mounted = useRef(true);
+  const currentRequestRef = useRef('');
+  const gameManagerRef = useRef(new GameManager(table.id));
 
   useEffect(() => {
-    let isMounted = true;
-    
-    const checkAuthentication = async () => {
-      try {
-        const auth = getAuth();
-        // Wait for auth state to be ready
-        await new Promise<void>((resolve) => {
-          const unsubscribe = auth.onAuthStateChanged((user) => {
-            if (user) {
-              resolve();
-            }
-            unsubscribe();
-          });
-        });
-
-        const currentUser = auth.currentUser;
-        const isAuthenticated = currentUser?.uid === player.id;
-        
-        if (isMounted) {
-          setIsAuthenticatedPlayer(isAuthenticated);
-          setAuthError(null);
-
-          console.log('[PlayerPosition] Authentication check:', JSON.stringify({
-            playerId: player.id,
-            currentUserId: currentUser?.uid,
-            isAuthenticated,
-            playerDetails: {
-              name: player.name,
-              position: player.position,
-              isActive: player.isActive,
-              chips: player.chips,
-              hasFolded: player.hasFolded
-            },
-            tableDetails: {
-              id: table.id,
-              phase: table.phase,
-              currentPlayerIndex: table.currentPlayerIndex,
-              totalPlayers: table.players.length,
-              activePlayerCount: table.players.filter(p => p.isActive).length
-            },
-            timestamp: new Date().toISOString(),
-            stack: new Error().stack?.split('\n').slice(0, 3).join('\n')
-          }, null, 2));
-        }
-      } catch (error) {
-        if (isMounted) {
-          console.error('[PlayerPosition] Authentication error:', error);
-          setAuthError(error instanceof Error ? error.message : 'Authentication failed');
-          setIsAuthenticatedPlayer(false);
-        }
-      }
-    };
-
-    checkAuthentication();
-
+    mounted.current = true;
     return () => {
-      isMounted = false;
+      mounted.current = false;
     };
-  }, [player.id]);
+  }, []);
 
   useEffect(() => {
-    let isMounted = true;
+    gameManagerRef.current = new GameManager(table.id);
+  }, [table.id]);
 
-    // Reset cards if in waiting phase
-    if (table.phase === 'waiting') {
-      setHoleCards([]);
-      setShowCards(false);
+  const loadHoleCards = useCallback(async () => {
+    const requestId = Math.random().toString(36).substring(7);
+    currentRequestRef.current = requestId;
+    console.log('[PlayerPosition] Starting card load:', {
+      requestId,
+      playerId: player.id,
+      userId: user?.uid,
+      isHandInProgress: table.isHandInProgress,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (!user || !table.isHandInProgress) {
+      console.log('[PlayerPosition] Skipping card load - conditions not met:', {
+        requestId,
+        playerId: player.id,
+        isAuthenticated: !!user,
+        isHandInProgress: table.isHandInProgress,
+        timestamp: new Date().toISOString(),
+      });
       return;
     }
 
-    const loadHoleCards = async () => {
-      // Only attempt to load cards if this is the authenticated user's position
-      if (!isAuthenticatedPlayer) {
-        setHoleCards([]);
-        setShowCards(false);
+    try {
+      // Check if this is still the current request
+      if (currentRequestRef.current !== requestId) {
+        console.log('[PlayerPosition] Cancelling outdated card load request:', {
+          requestId,
+          currentRequest: currentRequestRef.current,
+          timestamp: new Date().toISOString(),
+        });
         return;
       }
 
-      try {
-        const gameManager = new GameManager(table.id);
-        const cards = await gameManager.getPlayerHoleCards(player.id);
-        
-        if (isMounted) {
-          if (!cards || cards.length !== 2) {
-            console.debug('[PlayerPosition] Invalid or missing cards:', {
-              playerId: player.id,
-              hasCards: !!cards,
-              cardCount: cards?.length ?? 0,
-              timestamp: new Date().toISOString()
-            });
-            setHoleCards([]);
-            setShowCards(false);
-            return;
-          }
-
-          setHoleCards(cards);
-          setShowCards(true);
-        }
-      } catch (error) {
-        if (isMounted) {
-          console.error('[PlayerPosition] Error loading hole cards:', {
-            playerId: player.id,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: new Date().toISOString()
-          });
-          setHoleCards([]);
-          setShowCards(false);
-        }
+      const cards = await gameManagerRef.current.getPlayerHoleCards(player.id);
+      
+      // Check again if this is still the current request
+      if (currentRequestRef.current !== requestId) {
+        console.log('[PlayerPosition] Discarding outdated card load response:', {
+          requestId,
+          currentRequest: currentRequestRef.current,
+          timestamp: new Date().toISOString(),
+        });
+        return;
       }
-    };
 
-    loadHoleCards();
+      if (!cards || !Array.isArray(cards) || cards.length !== 2) {
+        console.warn('[PlayerPosition] Invalid cards received:', {
+          requestId,
+          playerId: player.id,
+          cards,
+          timestamp: new Date().toISOString(),
+        });
+        
+        // Implement exponential backoff for retries
+        const retryDelay = Math.min(1000 * Math.pow(2, retryCount.current), 8000);
+        if (retryCount.current < 3) {
+          console.log('[PlayerPosition] Scheduling retry:', {
+            requestId,
+            playerId: player.id,
+            retryCount: retryCount.current,
+            delay: retryDelay,
+            timestamp: new Date().toISOString(),
+          });
+          
+          retryCount.current += 1;
+          setTimeout(() => {
+            if (mounted.current) {
+              loadHoleCards();
+            }
+          }, retryDelay);
+        } else {
+          console.error('[PlayerPosition] Max retries reached:', {
+            requestId,
+            playerId: player.id,
+            retryCount: retryCount.current,
+            timestamp: new Date().toISOString(),
+          });
+          retryCount.current = 0;
+        }
+        return;
+      }
 
-    return () => {
-      isMounted = false;
-    };
-  }, [isAuthenticatedPlayer, player.id, table.id, table.phase]);
+      console.log('[PlayerPosition] Successfully loaded cards:', {
+        requestId,
+        playerId: player.id,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (mounted.current) {
+        setHoleCards(cards);
+        setShowCards(isAuthenticatedPlayer);
+        retryCount.current = 0;
+      }
+    } catch (error) {
+      console.error('[PlayerPosition] Error loading cards:', {
+        requestId,
+        playerId: player.id,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+        } : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      });
+
+      // Implement exponential backoff for error retries
+      const retryDelay = Math.min(1000 * Math.pow(2, retryCount.current), 8000);
+      if (retryCount.current < 3) {
+        console.log('[PlayerPosition] Scheduling error retry:', {
+          requestId,
+          playerId: player.id,
+          retryCount: retryCount.current,
+          delay: retryDelay,
+          timestamp: new Date().toISOString(),
+        });
+        
+        retryCount.current += 1;
+        setTimeout(() => {
+          if (mounted.current) {
+            loadHoleCards();
+          }
+        }, retryDelay);
+      } else {
+        console.error('[PlayerPosition] Max error retries reached:', {
+          requestId,
+          playerId: player.id,
+          retryCount: retryCount.current,
+          timestamp: new Date().toISOString(),
+        });
+        retryCount.current = 0;
+      }
+    }
+  }, [gameManagerRef, player.id, user, table.isHandInProgress, isAuthenticatedPlayer]);
+
+  useEffect(() => {
+    // Set authentication state based on auth context
+    if (user) {
+      const isAuthenticated = user.uid === player.id;
+      console.log('[PlayerPosition] Authentication state updated:', {
+        playerId: player.id,
+        isAuthenticated,
+        userId: user.uid,
+        timestamp: new Date().toISOString(),
+      });
+      setIsAuthenticatedPlayer(isAuthenticated);
+      setShowCards(isAuthenticated);
+      setAuthError(null);
+    } else {
+      console.log('[PlayerPosition] No authenticated user:', {
+        playerId: player.id,
+        timestamp: new Date().toISOString(),
+      });
+      setIsAuthenticatedPlayer(false);
+      setShowCards(false);
+      setAuthError('Not authenticated');
+    }
+  }, [user, player.id]);
+
+  // Load hole cards when hand is in progress and player is authenticated
+  useEffect(() => {
+    if (table.isHandInProgress && isAuthenticatedPlayer) {
+      console.log('[PlayerPosition] Loading hole cards:', {
+        playerId: player.id,
+        isHandInProgress: table.isHandInProgress,
+        isAuthenticatedPlayer,
+        timestamp: new Date().toISOString(),
+      });
+      loadHoleCards();
+    } else {
+      // Clear hole cards when hand is not in progress
+      setHoleCards([]);
+      setShowCards(false);
+    }
+  }, [table.isHandInProgress, isAuthenticatedPlayer, player.id, loadHoleCards]);
 
   // Calculate position around an ellipse
   const getPosition = () => {
@@ -195,34 +267,27 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
         )}
 
         {/* Cards */}
-        <div className="flex flex-col items-center gap-1">
-          {isAuthenticatedPlayer && !showCards && (
-            <div className="text-sm text-gray-300 animate-pulse mb-1">
-              {table.phase === 'waiting' ? 'Waiting for game to start' : 'Cards Loading...'}
-            </div>
+        <div className="flex gap-1">
+          {showCards && holeCards.length === 2 ? (
+            holeCards.map((card, index) => (
+              <CardComponent
+                key={`${card.suit}-${card.rank}-${index}`}
+                card={card}
+                faceDown={false}
+                className="transform scale-75"
+              />
+            ))
+          ) : (
+            // Show face down cards for other players or when cards aren't loaded
+            Array(2).fill(null).map((_, i) => (
+              <CardComponent
+                key={`facedown-${i}`}
+                card={{ suit: 'hearts', rank: '2' }} // Dummy card, will be shown face down
+                faceDown={true}
+                className="transform scale-75"
+              />
+            ))
           )}
-          <div className="flex gap-1 -mt-1">
-            {showCards ? (
-              holeCards.map((card) => (
-                <CardComponent
-                  key={`${card.suit}-${card.rank}`}
-                  card={card}
-                  faceDown={false}
-                  className="transform scale-75"
-                />
-              ))
-            ) : (
-              // Show face down cards for other players
-              Array(2).fill(null).map((_, i) => (
-                <CardComponent
-                  key={i}
-                  card={{ suit: 'hearts', rank: '2' }} // Dummy card, will be shown face down
-                  faceDown={true}
-                  className="transform scale-75"
-                />
-              ))
-            )}
-          </div>
         </div>
       </div>
     </div>
