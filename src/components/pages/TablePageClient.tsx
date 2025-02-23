@@ -8,12 +8,13 @@ import { useAuth } from '@/contexts/AuthContext';
 
 interface TablePageClientProps {
   tableId: string;
+  initialData?: Table | null;
 }
 
-export const TablePageClient = ({ tableId }: TablePageClientProps): React.ReactElement => {
+export const TablePageClient = ({ tableId, initialData }: TablePageClientProps): React.ReactElement => {
   const { user } = useAuth();
   const [gameManager] = useState(() => new GameManager(tableId));
-  const [tableState, setTableState] = useState<Table | null>(null);
+  const [tableState, setTableState] = useState<Table | null>(initialData || null);
   const [currentPlayerId, setCurrentPlayerId] = useState<string>();
   const [isLoading, setIsLoading] = useState(true);
   const [hasEnoughPlayers, setHasEnoughPlayers] = useState(false);

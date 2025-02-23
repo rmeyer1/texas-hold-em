@@ -24,21 +24,71 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
   const [holeCards, setHoleCards] = useState<Card[]>([]);
   const [showCards, setShowCards] = useState(false);
   const [isAuthenticatedPlayer, setIsAuthenticatedPlayer] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check if this player position belongs to the authenticated user
-    const auth = getAuth();
-    const currentUser = auth.currentUser;
-    const isAuthenticated = currentUser?.uid === player.id;
-    setIsAuthenticatedPlayer(isAuthenticated);
+    let isMounted = true;
+    
+    const checkAuthentication = async () => {
+      try {
+        const auth = getAuth();
+        // Wait for auth state to be ready
+        await new Promise<void>((resolve) => {
+          const unsubscribe = auth.onAuthStateChanged((user) => {
+            if (user) {
+              resolve();
+            }
+            unsubscribe();
+          });
+        });
 
-    console.log('[PlayerPosition] Authentication check:', {
-      playerId: player.id,
-      currentUserId: currentUser?.uid,
-      isAuthenticated,
-      tablePhase: table.phase,
-      timestamp: new Date().toISOString()
-    });
+        const currentUser = auth.currentUser;
+        const isAuthenticated = currentUser?.uid === player.id;
+        
+        if (isMounted) {
+          setIsAuthenticatedPlayer(isAuthenticated);
+          setAuthError(null);
+
+          console.log('[PlayerPosition] Authentication check:', JSON.stringify({
+            playerId: player.id,
+            currentUserId: currentUser?.uid,
+            isAuthenticated,
+            playerDetails: {
+              name: player.name,
+              position: player.position,
+              isActive: player.isActive,
+              chips: player.chips,
+              hasFolded: player.hasFolded
+            },
+            tableDetails: {
+              id: table.id,
+              phase: table.phase,
+              currentPlayerIndex: table.currentPlayerIndex,
+              totalPlayers: table.players.length,
+              activePlayerCount: table.players.filter(p => p.isActive).length
+            },
+            timestamp: new Date().toISOString(),
+            stack: new Error().stack?.split('\n').slice(0, 3).join('\n')
+          }, null, 2));
+        }
+      } catch (error) {
+        if (isMounted) {
+          console.error('[PlayerPosition] Authentication error:', error);
+          setAuthError(error instanceof Error ? error.message : 'Authentication failed');
+          setIsAuthenticatedPlayer(false);
+        }
+      }
+    };
+
+    checkAuthentication();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [player.id]);
+
+  useEffect(() => {
+    let isMounted = true;
 
     // Reset cards if in waiting phase
     if (table.phase === 'waiting') {
@@ -49,7 +99,7 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
 
     const loadHoleCards = async () => {
       // Only attempt to load cards if this is the authenticated user's position
-      if (!isAuthenticated) {
+      if (!isAuthenticatedPlayer) {
         setHoleCards([]);
         setShowCards(false);
         return;
@@ -59,33 +109,41 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
         const gameManager = new GameManager(table.id);
         const cards = await gameManager.getPlayerHoleCards(player.id);
         
-        if (!cards || cards.length !== 2) {
-          console.debug('[PlayerPosition] Invalid or missing cards:', {
+        if (isMounted) {
+          if (!cards || cards.length !== 2) {
+            console.debug('[PlayerPosition] Invalid or missing cards:', {
+              playerId: player.id,
+              hasCards: !!cards,
+              cardCount: cards?.length ?? 0,
+              timestamp: new Date().toISOString()
+            });
+            setHoleCards([]);
+            setShowCards(false);
+            return;
+          }
+
+          setHoleCards(cards);
+          setShowCards(true);
+        }
+      } catch (error) {
+        if (isMounted) {
+          console.error('[PlayerPosition] Error loading hole cards:', {
             playerId: player.id,
-            hasCards: !!cards,
-            cardCount: cards?.length ?? 0,
+            error: error instanceof Error ? error.message : 'Unknown error',
             timestamp: new Date().toISOString()
           });
           setHoleCards([]);
           setShowCards(false);
-          return;
         }
-
-        setHoleCards(cards);
-        setShowCards(true);
-      } catch (error) {
-        console.error('[PlayerPosition] Error loading hole cards:', {
-          playerId: player.id,
-          error,
-          timestamp: new Date().toISOString()
-        });
-        setHoleCards([]);
-        setShowCards(false);
       }
     };
 
     loadHoleCards();
-  }, [player.id, table.id, table.phase]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthenticatedPlayer, player.id, table.id, table.phase]);
 
   // Calculate position around an ellipse
   const getPosition = () => {

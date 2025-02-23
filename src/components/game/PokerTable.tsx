@@ -96,10 +96,25 @@ export const PokerTable: React.FC<PokerTableProps> = ({
 
     // Log warnings for debugging but don't prevent rendering
     if (warnings.length > 0) {
-      console.warn('Table state warnings:', {
+      const warningData = {
         warnings,
-        tableState: table,
-      });
+        tableState: {
+          id: table.id,
+          phase: table.phase,
+          playerCount: table.players?.length ?? 0,
+          activePlayers: table.players?.filter(p => p.isActive).length ?? 0,
+          currentPlayerIndex: table.currentPlayerIndex,
+          pot: table.pot,
+          currentBet: table.currentBet,
+          isHandInProgress: table.isHandInProgress,
+          lastAction: table.lastAction,
+          lastActivePlayer: table.lastActivePlayer
+        },
+        timestamp: new Date().toISOString(),
+        stack: new Error().stack?.split('\n').slice(0, 3).join('\n')
+      };
+
+      console.warn('Table state warnings:', JSON.stringify(warningData, null, 2));
     }
 
     return { 

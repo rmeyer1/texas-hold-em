@@ -1,23 +1,82 @@
 import { notFound } from 'next/navigation';
 import { TablePageClient } from '@/components/pages/TablePageClient';
+import { Suspense } from 'react';
+import { getTableData } from '@/services/gameManager';
 
 interface PageProps {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
+}
+
+async function TableLoader({ tableId }: { tableId: string }) {
+  console.log('[TableLoader] Starting to load table:', {
+    tableId,
+    timestamp: new Date().toISOString(),
+    stack: new Error().stack
+  });
+
+  try {
+    // Pre-fetch table data on the server
+    const tableData = await getTableData(tableId);
+    
+    console.log('[TableLoader] Table data fetched:', {
+      tableId,
+      hasData: !!tableData,
+      playerCount: tableData?.players?.length ?? 0,
+      timestamp: new Date().toISOString()
+    });
+
+    if (!tableData) {
+      console.error('[TableLoader] No table data found:', {
+        tableId,
+        timestamp: new Date().toISOString()
+      });
+      notFound();
+    }
+    return <TablePageClient tableId={tableId} initialData={tableData} />;
+  } catch (error) {
+    console.error('[TableLoader] Error loading table:', {
+      tableId,
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack
+      } : error,
+      timestamp: new Date().toISOString()
+    });
+    notFound();
+  }
 }
 
 /**
  * Server Component for the table page.
- * Note: While Next.js sometimes warns about awaiting params, in this case it's not needed
- * because params in dynamic route segments are synchronously available at the page level.
- * The params object is injected by Next.js routing system at build/request time.
+ * Using async function to properly handle dynamic route parameters in Next.js 13+
  */
-export default function TablePage({ params }: PageProps): React.ReactElement {
-  // Validate table ID - this is synchronous validation
-  if (!params.id || !/^[a-zA-Z0-9-]+$/.test(params.id)) {
+export default async function TablePage({ params }: PageProps): Promise<React.ReactElement> {
+  // Await the params object to properly handle dynamic route parameters
+  const resolvedParams = await params;
+  
+  console.log('[TablePage] Rendering with params:', {
+    params: resolvedParams,
+    timestamp: new Date().toISOString()
+  });
+
+  // Validate table ID format first
+  if (!resolvedParams?.id || !/^[a-zA-Z0-9-]+$/.test(resolvedParams.id)) {
+    console.error('[TablePage] Invalid table ID format:', {
+      params: resolvedParams,
+      timestamp: new Date().toISOString()
+    });
     notFound();
   }
 
-  return <TablePageClient tableId={params.id} />;
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-900 p-8 flex items-center justify-center">
+        <div className="text-white text-2xl">Loading table...</div>
+      </div>
+    }>
+      <TableLoader tableId={resolvedParams.id} />
+    </Suspense>
+  );
 } 

@@ -998,4 +998,20 @@ export class GameManager {
       throw error;
     }
   }
+}
+
+export async function getTableData(tableId: string): Promise<Table | null> {
+  try {
+    const tableRef = ref(database, `tables/${tableId}`);
+    const snapshot = await get(tableRef);
+    
+    if (!snapshot.exists()) {
+      return null;
+    }
+
+    return snapshot.val() as Table;
+  } catch (error) {
+    console.error('[getTableData] Error fetching table data:', error);
+    throw error;
+  }
 } 
