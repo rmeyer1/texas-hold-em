@@ -4,7 +4,7 @@ import { Card } from './Card';
 
 interface CommunityCardsProps {
   cards: CardType[];
-  phase: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
+  phase: 'waiting' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
 }
 
 export const CommunityCards: React.FC<CommunityCardsProps> = ({ cards, phase }) => {

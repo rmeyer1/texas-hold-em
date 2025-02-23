@@ -47,7 +47,7 @@ export interface Table {
   pot: number;
   currentBet: number;
   dealerPosition: number;
-  phase: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
+  phase: 'waiting' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
   currentPlayerIndex: number;
   smallBlind: number;
   bigBlind: number;
@@ -56,4 +56,11 @@ export interface Table {
   roundBets: { [playerId: string]: number };
   minRaise: number;
   turnTimeLimit: number;
+  isHandInProgress: boolean;
+  activePlayerCount: number;
+  lastAction: string | null;
+  lastActivePlayer: string | null;
+  gameStarted?: boolean; // Tracks whether the game has been manually started
+  isPrivate: boolean; // Whether the table requires a password to join
+  password: string | null; // Password required to join if isPrivate is true
 } 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Player, Table, Card } from '@/types/poker';
 import { Card as CardComponent } from './Card';
 import { GameManager } from '@/services/gameManager';
+import { getAuth } from 'firebase/auth';
 
 interface PlayerPositionProps {
   player: Player;
@@ -22,27 +23,69 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
 }) => {
   const [holeCards, setHoleCards] = useState<Card[]>([]);
   const [showCards, setShowCards] = useState(false);
+  const [isAuthenticatedPlayer, setIsAuthenticatedPlayer] = useState(false);
 
   useEffect(() => {
+    // Check if this player position belongs to the authenticated user
+    const auth = getAuth();
+    const currentUser = auth.currentUser;
+    const isAuthenticated = currentUser?.uid === player.id;
+    setIsAuthenticatedPlayer(isAuthenticated);
+
+    console.log('[PlayerPosition] Authentication check:', {
+      playerId: player.id,
+      currentUserId: currentUser?.uid,
+      isAuthenticated,
+      tablePhase: table.phase,
+      timestamp: new Date().toISOString()
+    });
+
+    // Reset cards if in waiting phase
+    if (table.phase === 'waiting') {
+      setHoleCards([]);
+      setShowCards(false);
+      return;
+    }
+
     const loadHoleCards = async () => {
-      if (isCurrentPlayer) {
+      // Only attempt to load cards if this is the authenticated user's position
+      if (!isAuthenticated) {
+        setHoleCards([]);
+        setShowCards(false);
+        return;
+      }
+
+      try {
         const gameManager = new GameManager(table.id);
         const cards = await gameManager.getPlayerHoleCards(player.id);
-        if (cards) {
-          setHoleCards(cards);
-          setShowCards(true);
-        } else {
+        
+        if (!cards || cards.length !== 2) {
+          console.debug('[PlayerPosition] Invalid or missing cards:', {
+            playerId: player.id,
+            hasCards: !!cards,
+            cardCount: cards?.length ?? 0,
+            timestamp: new Date().toISOString()
+          });
           setHoleCards([]);
           setShowCards(false);
+          return;
         }
-      } else {
+
+        setHoleCards(cards);
+        setShowCards(true);
+      } catch (error) {
+        console.error('[PlayerPosition] Error loading hole cards:', {
+          playerId: player.id,
+          error,
+          timestamp: new Date().toISOString()
+        });
         setHoleCards([]);
         setShowCards(false);
       }
     };
 
     loadHoleCards();
-  }, [isCurrentPlayer, player.id, table.id]);
+  }, [player.id, table.id, table.phase]);
 
   // Calculate position around an ellipse
   const getPosition = () => {
@@ -79,6 +122,11 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
               Your Turn
             </div>
           )}
+          {isAuthenticatedPlayer && (
+            <div className="text-xs text-green-300 font-semibold">
+              (You)
+            </div>
+          )}
         </div>
 
         {/* Dealer button */}
@@ -89,27 +137,34 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
         )}
 
         {/* Cards */}
-        <div className="flex gap-1 -mt-1">
-          {showCards ? (
-            holeCards.map((card) => (
-              <CardComponent
-                key={`${card.suit}-${card.rank}`}
-                card={card}
-                faceDown={false}
-                className="transform scale-75"
-              />
-            ))
-          ) : (
-            // Show face down cards for other players
-            Array(2).fill(null).map((_, i) => (
-              <CardComponent
-                key={i}
-                card={{ suit: 'hearts', rank: '2' }} // Dummy card, will be shown face down
-                faceDown={true}
-                className="transform scale-75"
-              />
-            ))
+        <div className="flex flex-col items-center gap-1">
+          {isAuthenticatedPlayer && !showCards && (
+            <div className="text-sm text-gray-300 animate-pulse mb-1">
+              {table.phase === 'waiting' ? 'Waiting for game to start' : 'Cards Loading...'}
+            </div>
           )}
+          <div className="flex gap-1 -mt-1">
+            {showCards ? (
+              holeCards.map((card) => (
+                <CardComponent
+                  key={`${card.suit}-${card.rank}`}
+                  card={card}
+                  faceDown={false}
+                  className="transform scale-75"
+                />
+              ))
+            ) : (
+              // Show face down cards for other players
+              Array(2).fill(null).map((_, i) => (
+                <CardComponent
+                  key={i}
+                  card={{ suit: 'hearts', rank: '2' }} // Dummy card, will be shown face down
+                  faceDown={true}
+                  className="transform scale-75"
+                />
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>

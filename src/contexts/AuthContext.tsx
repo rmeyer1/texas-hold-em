@@ -26,7 +26,7 @@ type AuthProviderProps = {
   children: ReactNode;
 };
 
-export const AuthProvider = ({ children }: AuthProviderProps): JSX.Element => {
+export const AuthProvider = ({ children }: AuthProviderProps): React.ReactElement => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
