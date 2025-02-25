@@ -42,6 +42,7 @@ export interface Player {
 
 export interface Table {
   id: string;
+  name?: string; // Table name provided by the creator
   players: Player[];
   communityCards: Card[];
   pot: number;
@@ -63,4 +64,5 @@ export interface Table {
   gameStarted?: boolean; // Tracks whether the game has been manually started
   isPrivate: boolean; // Whether the table requires a password to join
   password: string | null; // Password required to join if isPrivate is true
+  maxPlayers?: number; // Maximum number of players allowed at the table
 } 

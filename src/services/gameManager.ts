@@ -2050,6 +2050,7 @@ export class GameManager {
       // Create initial table state
       const initialTable: Table = {
         id: tableId,
+        name: tableName, // Add the table name to the initial state
         players: [{
           id: userId,
           name: auth.currentUser?.displayName || 'Player',
@@ -2078,6 +2079,7 @@ export class GameManager {
         gameStarted: false,
         isPrivate,
         password: isPrivate ? password || null : null,
+        maxPlayers, // Add maxPlayers to the initial state
       };
 
       // Create the table in the database

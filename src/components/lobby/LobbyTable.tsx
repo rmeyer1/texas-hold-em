@@ -38,43 +38,49 @@ export const LobbyTable = ({ table, onJoin }: LobbyTableProps): React.ReactEleme
   };
 
   return (
-    <div className="bg-green-900 rounded-lg p-4 shadow-lg hover:bg-green-850 transition-colors">
-      <div className="flex justify-between items-center">
+    <div className="bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl p-5 shadow-xl border border-gray-700 hover:border-blue-500 transition-all duration-300 transform hover:scale-[1.01]">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-white text-lg font-semibold">{table.name}</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <h3 className="text-white text-xl font-bold tracking-wide bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">{table.name}</h3>
             {table.isPrivate && (
-              <span className="bg-yellow-600 text-xs px-2 py-1 rounded text-white">Private</span>
+              <span className="bg-gradient-to-r from-yellow-500 to-yellow-600 text-xs px-2 py-1 rounded-md text-white font-semibold shadow-sm">Private</span>
             )}
           </div>
-          <p className="text-gray-300">
-            Players: {table.players}/{table.maxPlayers}
-          </p>
+          <div className="flex items-center gap-4">
+            <p className="text-gray-300 flex items-center">
+              <span className="inline-block w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+              <span className="font-medium">{table.players}/{table.maxPlayers}</span>
+              <span className="text-gray-400 ml-1">Players</span>
+            </p>
+            <p className="text-gray-300">
+              <span className="text-gray-400">Blinds: </span>
+              <span className="font-medium">${table.smallBlind}/${table.bigBlind}</span>
+            </p>
+          </div>
         </div>
-        <div className="text-right">
-          <p className="text-gray-300">
-            Blinds: ${table.smallBlind}/${table.bigBlind}
-          </p>
+        
+        <div className="w-full sm:w-auto">
           {table.isPrivate ? (
-            <div className="mt-2 flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row items-center gap-2">
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password"
-                className="px-2 py-1 rounded bg-green-800 text-white border border-green-700 text-sm"
+                className="w-full sm:w-auto px-4 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-sm"
               />
               <button
                 onClick={handleJoin}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                className="w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 shadow-lg text-sm font-medium"
               >
-                Join
+                Join Table
               </button>
             </div>
           ) : (
             <button
               onClick={() => onJoin(table.id)}
-              className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+              className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 shadow-lg font-semibold"
             >
               Join Table
             </button>
