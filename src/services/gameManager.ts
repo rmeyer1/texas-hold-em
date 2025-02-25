@@ -362,81 +362,375 @@ export class GameManager {
     return table !== null;
   }
 
-  public async initializeRound(): Promise<void> {
-    const table = await this.getTable();
-    if (!this.isTable(table)) {
-      throw new Error('Table not found');
-    }
-
-    const activePlayers = table.players.filter(p => p.isActive && p.chips > 0);
-    
-    // Create a mapping of active player IDs to their original indices
-    const playerIndexMap = new Map<string, number>();
-    table.players.forEach((player, index) => {
-      if (activePlayers.some(ap => ap.id === player.id)) {
-        playerIndexMap.set(player.id, index);
-      }
-    });
-
-    console.log(`[GameManager] Active players: ${activePlayers.length}`, {
-      activePlayerIds: activePlayers.map(p => p.id),
+  private async initializeRound(): Promise<void> {
+    const roundId = `round-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    console.log('[GameManager] Initializing round:', {
+      roundId,
+      tableId: this.tableRef.key,
       timestamp: new Date().toISOString(),
     });
-    
-    if (activePlayers.length < 2) {
-      throw new Error('Not enough players to start a round');
+
+    try {
+      // Log the current table state before initializing the round
+      await this.logTableState('initialize-round-begin');
+
+      // Get the current table state
+      const table = await this.getTableState();
+      if (!table) {
+        console.error('[GameManager] Failed to get table state when initializing round:', {
+          roundId,
+          tableId: this.tableRef.key,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      console.log('[GameManager] Current table state before initializing round:', {
+        roundId,
+        phase: table.phase,
+        pot: table.pot,
+        smallBlind: table.smallBlind,
+        bigBlind: table.bigBlind,
+        dealerPosition: table.dealerPosition,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Filter active players with chips
+      const activePlayers = table.players.filter(p => p.isActive && p.chips > 0);
+      console.log('[GameManager] Active players for round:', {
+        roundId,
+        activePlayerCount: activePlayers.length,
+        activePlayerIds: activePlayers.map(p => p.id),
+        activePlayerNames: activePlayers.map(p => p.name),
+        timestamp: new Date().toISOString(),
+      });
+
+      if (activePlayers.length < 2) {
+        console.error('[GameManager] Not enough active players to initialize round:', {
+          roundId,
+          activePlayerCount: activePlayers.length,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Calculate player positions
+      const dealerIndex = table.dealerPosition;
+      const smallBlindIndex = this.getNextActivePlayerIndex(table, dealerIndex);
+      const bigBlindIndex = this.getNextActivePlayerIndex(table, smallBlindIndex);
+      const nextPlayerIndex = this.getNextActivePlayerIndex(table, bigBlindIndex);
+
+      console.log('[GameManager] Player positions calculated:', {
+        roundId,
+        dealerIndex,
+        dealerPlayerId: table.players[dealerIndex]?.id,
+        smallBlindIndex,
+        smallBlindPlayerId: table.players[smallBlindIndex]?.id,
+        bigBlindIndex,
+        bigBlindPlayerId: table.players[bigBlindIndex]?.id,
+        nextPlayerIndex,
+        nextPlayerId: table.players[nextPlayerIndex]?.id,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Set blinds
+      const smallBlindValue = table.smallBlind || 10;
+      const bigBlindValue = table.bigBlind || 20;
+
+      console.log('[GameManager] Setting blinds:', {
+        roundId,
+        smallBlindValue,
+        bigBlindValue,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Get players for small and big blinds
+      const smallBlindPlayer = table.players[smallBlindIndex];
+      const bigBlindPlayer = table.players[bigBlindIndex];
+
+      // Check if players have enough chips for blinds
+      if (smallBlindPlayer.chips < smallBlindValue) {
+        console.warn('[GameManager] Small blind player has insufficient chips:', {
+          roundId,
+          playerId: smallBlindPlayer.id,
+          playerChips: smallBlindPlayer.chips,
+          smallBlindValue,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      if (bigBlindPlayer.chips < bigBlindValue) {
+        console.warn('[GameManager] Big blind player has insufficient chips:', {
+          roundId,
+          playerId: bigBlindPlayer.id,
+          playerChips: bigBlindPlayer.chips,
+          bigBlindValue,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Prepare updates for table state
+      const smallBlindAmount = Math.min(smallBlindPlayer.chips, smallBlindValue);
+      const bigBlindAmount = Math.min(bigBlindPlayer.chips, bigBlindValue);
+      const potAmount = smallBlindAmount + bigBlindAmount;
+
+      // Update player chips
+      const updatedPlayers = [...table.players];
+      updatedPlayers[smallBlindIndex] = {
+        ...smallBlindPlayer,
+        chips: smallBlindPlayer.chips - smallBlindAmount,
+      };
+      updatedPlayers[bigBlindIndex] = {
+        ...bigBlindPlayer,
+        chips: bigBlindPlayer.chips - bigBlindAmount,
+      };
+
+      // Prepare round bets
+      const roundBets: Record<string, number> = {};
+      roundBets[smallBlindPlayer.id] = smallBlindAmount;
+      roundBets[bigBlindPlayer.id] = bigBlindAmount;
+
+      // Prepare table updates
+      const tableUpdates: Partial<Table> = {
+        players: updatedPlayers,
+        currentPlayerIndex: nextPlayerIndex,
+        pot: potAmount,
+        currentBet: bigBlindAmount,
+        roundBets,
+      };
+
+      console.log('[GameManager] Preparing table updates for blinds:', {
+        roundId,
+        smallBlindPlayerId: smallBlindPlayer.id,
+        smallBlindOldChips: smallBlindPlayer.chips,
+        smallBlindNewChips: updatedPlayers[smallBlindIndex].chips,
+        smallBlindAmount,
+        bigBlindPlayerId: bigBlindPlayer.id,
+        bigBlindOldChips: bigBlindPlayer.chips,
+        bigBlindNewChips: updatedPlayers[bigBlindIndex].chips,
+        bigBlindAmount,
+        potAmount,
+        currentBet: bigBlindAmount,
+        roundBets,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Log the table state before updating
+      await this.logTableState('before-blinds-update');
+
+      // Update the table with blinds
+      await this.updateTable(tableUpdates);
+      console.log('[GameManager] Blinds set successfully:', {
+        roundId,
+        smallBlindPlayerId: smallBlindPlayer.id,
+        smallBlindAmount,
+        bigBlindPlayerId: bigBlindPlayer.id,
+        bigBlindAmount,
+        potAmount,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Log the table state after updating blinds
+      await this.logTableState('after-blinds-update');
+
+      // Deal cards to players
+      await this.dealCardsToPlayers(activePlayers);
+
+      // Log the final state after initializing the round
+      await this.logTableState('initialize-round-complete');
+
+      // Verify the round was initialized correctly
+      const updatedTable = await this.getTableState();
+      if (!updatedTable) {
+        console.error('[GameManager] Failed to get updated table state after initializing round:', {
+          roundId,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      console.log('[GameManager] Round initialized successfully:', {
+        roundId,
+        phase: updatedTable.phase,
+        pot: updatedTable.pot,
+        currentBet: updatedTable.currentBet,
+        roundBets: updatedTable.roundBets,
+        currentPlayerIndex: updatedTable.currentPlayerIndex,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('[GameManager] Error initializing round:', {
+        roundId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
     }
+  }
 
-    // Calculate positions based on active players
-    const newDealerPosition = (table.dealerPosition + 1) % activePlayers.length;
-    const smallBlindPos = (newDealerPosition + 1) % activePlayers.length;
-    const bigBlindPos = (newDealerPosition + 2) % activePlayers.length;
-    const nextActivePlayerIndex = (bigBlindPos + 1) % activePlayers.length;
-
-    // Map the active player positions back to table.players indices
-    const smallBlindPlayer = activePlayers[smallBlindPos];
-    const bigBlindPlayer = activePlayers[bigBlindPos];
-    const nextPlayer = activePlayers[nextActivePlayerIndex];
-    
-    // Get the actual indices in the full players array using the map
-    const currentPlayerIndex = playerIndexMap.get(nextPlayer.id)!;
-
-    // Reset table state for new round
-    const updates: Partial<Table> = {
-      dealerPosition: playerIndexMap.get(activePlayers[newDealerPosition].id)!,
-      currentPlayerIndex,
-      phase: 'preflop',
-      pot: 0,
-      currentBet: table.bigBlind || GameManager.DEFAULT_BIG_BLIND,
-      communityCards: [],
-      bettingRound: 'small_blind',
-      lastActionTimestamp: Date.now(),
-      smallBlind: table.smallBlind || GameManager.DEFAULT_SMALL_BLIND,
-      bigBlind: table.bigBlind || GameManager.DEFAULT_BIG_BLIND,
-      roundBets: {},
-      minRaise: table.bigBlind || GameManager.DEFAULT_BIG_BLIND,
-      turnTimeLimit: GameManager.TURN_TIME_LIMIT,
-    };
-
-    // Post blinds
-    updates.roundBets = {
-      [smallBlindPlayer.id]: updates.smallBlind!,
-      [bigBlindPlayer.id]: updates.bigBlind!,
-    };
-
-    // Update players' chips
-    const updatedPlayers = table.players.map(player => {
-      if (player.id === smallBlindPlayer.id) {
-        return { ...player, chips: player.chips - updates.smallBlind! };
-      }
-      if (player.id === bigBlindPlayer.id) {
-        return { ...player, chips: player.chips - updates.bigBlind! };
-      }
-      return { ...player, hasFolded: false };
+  // Helper method to deal cards to players
+  private async dealCardsToPlayers(activePlayers: Player[]): Promise<void> {
+    const dealId = `deal-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    console.log('[GameManager] Dealing cards to players:', {
+      dealId,
+      playerCount: activePlayers.length,
+      playerIds: activePlayers.map(p => p.id),
+      timestamp: new Date().toISOString(),
     });
 
-    updates.players = updatedPlayers;
-    await update(this.tableRef, updates);
+    try {
+      // Reset and shuffle the deck to ensure fresh cards
+      this.deck.reset();
+      this.deck.shuffle();
+      console.log('[GameManager] Deck reset and shuffled:', {
+        dealId,
+        deckSize: this.deck.getRemainingCards(),
+        timestamp: new Date().toISOString(),
+      });
+
+      const dealingPromises = activePlayers.map(async (player) => {
+        try {
+          const cards = this.deck.dealHoleCards();
+          if (!cards) {
+            console.error('[GameManager] Not enough cards in deck for player:', {
+              dealId,
+              playerId: player.id,
+              remainingCards: this.deck.getRemainingCards(),
+              timestamp: new Date().toISOString(),
+            });
+            return false;
+          }
+
+          await this.setPlayerCards(player.id, cards);
+          console.log('[GameManager] Cards dealt to player:', {
+            dealId,
+            playerId: player.id,
+            cards: JSON.stringify(cards),
+            timestamp: new Date().toISOString(),
+          });
+          return true;
+        } catch (error) {
+          console.error('[GameManager] Error dealing cards to player:', {
+            dealId,
+            playerId: player.id,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
+            timestamp: new Date().toISOString(),
+          });
+          return false;
+        }
+      });
+
+      const results = await Promise.all(dealingPromises);
+      const successCount = results.filter(Boolean).length;
+      const failedPlayers = activePlayers.filter((_, index) => !results[index]);
+
+      console.log('[GameManager] Cards dealt to players:', {
+        dealId,
+        successCount,
+        failedCount: failedPlayers.length,
+        totalPlayers: activePlayers.length,
+        timestamp: new Date().toISOString(),
+      });
+
+      // If any players failed to receive cards, try to recover
+      if (failedPlayers.length > 0) {
+        console.log('[GameManager] Attempting to recover failed card deals:', {
+          dealId,
+          failedPlayerIds: failedPlayers.map(p => p.id),
+          timestamp: new Date().toISOString(),
+        });
+
+        // Reset the deck again for recovery
+        this.deck.reset();
+        this.deck.shuffle();
+
+        const recoveryPromises = failedPlayers.map(async (player) => {
+          try {
+            const cards = this.deck.dealHoleCards();
+            if (!cards) {
+              console.error('[GameManager] Recovery failed - not enough cards in deck:', {
+                dealId,
+                playerId: player.id,
+                remainingCards: this.deck.getRemainingCards(),
+                timestamp: new Date().toISOString(),
+              });
+              return false;
+            }
+
+            await this.setPlayerCards(player.id, cards);
+            console.log('[GameManager] Recovery successful - cards dealt to player:', {
+              dealId,
+              playerId: player.id,
+              cards: JSON.stringify(cards),
+              timestamp: new Date().toISOString(),
+            });
+            return true;
+          } catch (error) {
+            console.error('[GameManager] Recovery failed - error dealing cards:', {
+              dealId,
+              playerId: player.id,
+              error: error instanceof Error ? error.message : 'Unknown error',
+              stack: error instanceof Error ? error.stack : undefined,
+              timestamp: new Date().toISOString(),
+            });
+            return false;
+          }
+        });
+
+        const recoveryResults = await Promise.all(recoveryPromises);
+        const recoverySuccessCount = recoveryResults.filter(Boolean).length;
+
+        console.log('[GameManager] Recovery attempt completed:', {
+          dealId,
+          recoverySuccessCount,
+          recoveryFailedCount: failedPlayers.length - recoverySuccessCount,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (error) {
+      console.error('[GameManager] Error dealing cards to players:', {
+        dealId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // Helper method to set player cards
+  private async setPlayerCards(playerId: string, cards: [Card, Card]): Promise<void> {
+    console.log('[GameManager] Setting player cards:', {
+      playerId,
+      cards: JSON.stringify(cards),
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const privateRef = this.getPrivatePlayerRef(playerId);
+      
+      // Create a privateData object with cards and timestamp
+      const privateData: PrivatePlayerData = {
+        holeCards: cards,
+        lastUpdated: Date.now()
+      };
+      
+      await set(privateRef, privateData);
+      
+      console.log('[GameManager] Player cards set successfully:', {
+        playerId,
+        path: privateRef.toString(),
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('[GameManager] Error setting player cards:', {
+        playerId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
+    }
   }
 
   public async handlePlayerAction(
@@ -625,11 +919,11 @@ export class GameManager {
         action,
         error: error instanceof Error ? {
           message: error.message,
-          stack: error.stack,
+          stack: error.stack
         } : 'Unknown error',
         timestamp: new Date().toISOString(),
       });
-      throw error;
+      throw error; // Re-throw the error to be handled by the caller
     }
   }
 
@@ -986,132 +1280,168 @@ export class GameManager {
       isHandInProgress: false 
     });
 
+    console.log('[GameManager] Starting game with first hand');
+    
     // Then start the first hand
     await this.startNewHand();
+    
+    // Note: startNewHand now calls initializeRound internally
   }
 
   public async startNewHand(): Promise<void> {
-    console.log('[GameManager] Starting new hand');
-    
-    const tableSnapshot = await get(this.tableRef);
-    const table = tableSnapshot.val() as Table;
+    const handId = `hand-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    console.log('[GameManager] Starting new hand:', {
+      handId,
+      tableId: this.tableRef.key,
+      timestamp: new Date().toISOString(),
+    });
 
-    if (!table) {
-      console.error('[GameManager] Table not found when starting new hand');
-      throw new Error('Table not found');
-    }
+    try {
+      // Log the current table state before starting a new hand
+      await this.logTableState('start-new-hand-begin');
 
-    // Reset the deck
-    this.deck.reset();
-    console.log('[GameManager] Deck reset and shuffled');
-
-    // Get active players and update their states
-    const updatedPlayers = table.players.map(player => ({
-      ...player,
-      hasFolded: false,
-    }));
-
-    // Clear all private card data before dealing new cards
-    console.log('[GameManager] Clearing private data for all players');
-    await Promise.all(
-      updatedPlayers.map(async (player) => {
-        try {
-          const privateRef = this.getPrivatePlayerRef(player.id);
-          await set(privateRef, null);
-          console.log('[GameManager] Cleared private data for player:', {
-            playerId: player.id,
-            timestamp: new Date().toISOString(),
-          });
-        } catch (error) {
-          console.error('[GameManager] Error clearing private data:', {
-            playerId: player.id,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: new Date().toISOString(),
-          });
-        }
-      })
-    );
-
-    // Update table state before dealing cards
-    const updates: Partial<Table> = {
-      isHandInProgress: true,
-      phase: 'preflop',
-      players: updatedPlayers,
-      communityCards: [],
-      pot: 0,
-      currentBet: 0,
-      minRaise: table.bigBlind || 20,
-      roundBets: {},
-      lastAction: 'New hand started',
-      lastActionTimestamp: Date.now()
-    };
-
-    // Set hand in progress and phase to preflop before dealing cards
-    console.log('[GameManager] Updating table state for new hand');
-    await update(this.tableRef, updates);
-
-    // Deal and store private cards
-    for (const player of updatedPlayers) {
-      if (player.isActive) {
-        try {
-          const cards = this.deck.dealHoleCards();
-          if (!cards) {
-            console.error('[GameManager] Not enough cards in deck for player:', {
-              playerId: player.id,
-              timestamp: new Date().toISOString(),
-            });
-            throw new Error('Not enough cards in deck');
-          }
-          
-          const privateRef = this.getPrivatePlayerRef(player.id);
-          const privateData: PrivatePlayerData = {
-            holeCards: cards,
-            lastUpdated: Date.now()
-          };
-          
-          console.log('[GameManager] Storing private cards for player:', {
-            playerId: player.id,
-            timestamp: new Date().toISOString(),
-          });
-
-          // Retry up to 3 times with exponential backoff
-          let stored = false;
-          for (let i = 0; i < 3 && !stored; i++) {
-            try {
-              await set(privateRef, privateData);
-              stored = true;
-              console.log('[GameManager] Successfully stored private cards for player:', {
-                playerId: player.id,
-                attempt: i + 1,
-                timestamp: new Date().toISOString(),
-              });
-            } catch (error) {
-              console.error('[GameManager] Error storing private cards (attempt ' + (i + 1) + '):', {
-                playerId: player.id,
-                error: error instanceof Error ? error.message : 'Unknown error',
-                timestamp: new Date().toISOString(),
-              });
-              if (i < 2) {
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
-              }
-            }
-          }
-
-          if (!stored) {
-            throw new Error('Failed to store private cards after 3 attempts');
-          }
-        } catch (error) {
-          console.error('[GameManager] Fatal error dealing cards to player:', {
-            playerId: player.id,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: new Date().toISOString(),
-          });
-          throw error;
-        }
+      // Get the current table state
+      const table = await this.getTableState();
+      if (!table) {
+        console.error('[GameManager] Failed to get table state when starting new hand:', {
+          handId,
+          tableId: this.tableRef.key,
+          timestamp: new Date().toISOString(),
+        });
+        return;
       }
-    }
 
-    console.log('[GameManager] New hand setup completed');
+      console.log('[GameManager] Current table state before starting new hand:', {
+        handId,
+        phase: table.phase,
+        pot: table.pot,
+        smallBlind: table.smallBlind,
+        bigBlind: table.bigBlind,
+        dealerPosition: table.dealerPosition,
+        activePlayerCount: table.players.filter(p => p.isActive && p.chips > 0).length,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Reset the deck
+      this.deck = new Deck();
+      this.deck.shuffle();
+      console.log('[GameManager] Deck reset and shuffled for new hand:', {
+        handId,
+        deckSize: this.deck.getRemainingCards(),
+        timestamp: new Date().toISOString(),
+      });
+
+      // Clear private data for all players
+      const updatedPlayers = table.players.map(player => ({
+        ...player,
+        cards: [],
+        hasFolded: false,
+      }));
+
+      console.log('[GameManager] Cleared private data for all players:', {
+        handId,
+        playerCount: updatedPlayers.length,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Move the dealer button to the next active player
+      const activePlayers = updatedPlayers.filter(p => p.isActive && p.chips > 0);
+      if (activePlayers.length < 2) {
+        console.error('[GameManager] Not enough active players to start a new hand:', {
+          handId,
+          activePlayerCount: activePlayers.length,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      let newDealerPosition = (table.dealerPosition + 1) % table.players.length;
+      while (!table.players[newDealerPosition].isActive || table.players[newDealerPosition].chips <= 0) {
+        newDealerPosition = (newDealerPosition + 1) % table.players.length;
+      }
+
+      console.log('[GameManager] Moving dealer position:', {
+        handId,
+        oldDealerPosition: table.dealerPosition,
+        newDealerPosition,
+        dealerPlayerId: table.players[newDealerPosition].id,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Update the table state
+      const tableUpdate: Partial<Table> = {
+        phase: 'preflop',
+        pot: 0,
+        communityCards: [],
+        currentPlayerIndex: -1, // Will be set in initializeRound
+        dealerPosition: newDealerPosition,
+        players: updatedPlayers,
+        roundBets: {},
+        currentBet: 0,
+        isHandInProgress: true, // Set hand in progress to true
+      };
+
+      console.log('[GameManager] Updating table state for new hand:', {
+        handId,
+        tableUpdate: {
+          phase: tableUpdate.phase,
+          pot: tableUpdate.pot,
+          dealerPosition: tableUpdate.dealerPosition,
+          currentPlayerIndex: tableUpdate.currentPlayerIndex,
+        },
+        timestamp: new Date().toISOString(),
+      });
+
+      await this.updateTable(tableUpdate);
+      await this.logTableState('after-table-update-before-init-round');
+
+      // Initialize the round to set blinds and deal cards
+      console.log('[GameManager] Initializing round to set blinds and deal cards:', {
+        handId,
+        timestamp: new Date().toISOString(),
+      });
+      
+      await this.initializeRound();
+      await this.logTableState('after-initialize-round');
+
+      // Verify blinds were set correctly
+      const updatedTable = await this.getTableState();
+      if (!updatedTable) {
+        console.error('[GameManager] Failed to get updated table state after initializing round:', {
+          handId,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      console.log('[GameManager] Blinds verification after initializing round:', {
+        handId,
+        pot: updatedTable.pot,
+        smallBlind: updatedTable.smallBlind,
+        bigBlind: updatedTable.bigBlind,
+        roundBets: updatedTable.roundBets,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Log the final state of the table after starting a new hand
+      console.log('[GameManager] New hand started successfully:', {
+        handId,
+        phase: updatedTable.phase,
+        pot: updatedTable.pot,
+        smallBlind: updatedTable.smallBlind,
+        bigBlind: updatedTable.bigBlind,
+        currentBet: updatedTable.currentBet,
+        roundBets: updatedTable.roundBets,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('[GameManager] Error starting new hand:', {
+        handId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
+    }
   }
 
   public async dealFlop(): Promise<void> {
@@ -1506,10 +1836,12 @@ export class GameManager {
 
   public async getPlayerHoleCards(playerId: string): Promise<Card[] | null> {
     const requestingUserId = this.getCurrentUserId();
+    const tableId = this.tableRef.key;
     
     if (!requestingUserId) {
       console.warn('[GameManager] Cannot get hole cards - no authenticated user:', {
         playerId,
+        tableId,
         timestamp: new Date().toISOString(),
       });
       return null;
@@ -1520,30 +1852,177 @@ export class GameManager {
       console.warn('[GameManager] Cannot get hole cards - user not authorized:', {
         playerId,
         requestingUserId,
+        tableId,
         timestamp: new Date().toISOString(),
       });
       return null;
     }
 
     try {
+      // First check if a hand is in progress or we're in a valid game phase
+      const tableSnapshot = await get(this.tableRef);
+      const tableData = tableSnapshot.val() as Table | null;
+      
+      const isValidGamePhase = tableData && ['preflop', 'flop', 'turn', 'river', 'showdown'].includes(tableData.phase);
+      
+      if (!tableData || (!tableData.isHandInProgress && !isValidGamePhase)) {
+        console.warn('[GameManager] Cannot get hole cards - no hand in progress and invalid game phase:', {
+          playerId,
+          tableId,
+          tableData: tableData ? {
+            isHandInProgress: tableData.isHandInProgress,
+            phase: tableData.phase,
+            isValidGamePhase
+          } : 'null',
+          timestamp: new Date().toISOString(),
+        });
+        return null;
+      }
+
       const privateRef = this.getPrivatePlayerRef(playerId);
       const snapshot = await get(privateRef);
+      
+      if (!snapshot.exists()) {
+        console.warn('[GameManager] Private player data does not exist:', {
+          playerId,
+          tableId,
+          path: privateRef.toString(),
+          timestamp: new Date().toISOString(),
+        });
+        
+        // If we're in a valid game phase but private data doesn't exist, 
+        // we should initialize it with new cards
+        const isValidGamePhase = ['preflop', 'flop', 'turn', 'river', 'showdown'].includes(tableData.phase);
+        if (tableData.isHandInProgress || isValidGamePhase) {
+          console.log('[GameManager] Creating missing private player data:', {
+            playerId,
+            tableId,
+            isHandInProgress: tableData.isHandInProgress,
+            phase: tableData.phase,
+            isValidGamePhase,
+            timestamp: new Date().toISOString(),
+          });
+          
+          // Deal new cards for this player
+          let cards = this.deck.dealHoleCards();
+          
+          // If dealing failed, try resetting the deck and dealing again
+          if (!cards) {
+            console.warn('[GameManager] Failed to deal hole cards, resetting deck and trying again:', {
+              playerId,
+              remainingCards: this.deck.getRemainingCards(),
+              timestamp: new Date().toISOString(),
+            });
+            
+            this.deck.reset();
+            cards = this.deck.dealHoleCards();
+            
+            if (!cards) {
+              console.error('[GameManager] Still failed to deal hole cards after deck reset:', {
+                playerId,
+                remainingCards: this.deck.getRemainingCards(),
+                timestamp: new Date().toISOString(),
+              });
+              return null;
+            }
+          }
+          
+          // Create the private player data
+          try {
+            await this.initializePrivatePlayerData(playerId, cards);
+            console.log('[GameManager] Successfully created private player data with new cards:', {
+              playerId,
+              tableId,
+              timestamp: new Date().toISOString(),
+            });
+            return cards;
+          } catch (error) {
+            console.error('[GameManager] Error creating private player data:', {
+              playerId,
+              tableId,
+              error: error instanceof Error ? {
+                message: error.message,
+                stack: error.stack
+              } : 'Unknown error',
+              timestamp: new Date().toISOString(),
+            });
+            return null;
+          }
+        }
+        
+        return null;
+      }
+      
       const privateData = snapshot.val() as PrivatePlayerData | null;
       
-      if (!privateData || !Array.isArray(privateData.holeCards) || privateData.holeCards.length !== 2) {
-        console.warn('[GameManager] Invalid or missing hole cards:', {
+      if (!privateData) {
+        console.warn('[GameManager] Private player data is null:', {
           playerId,
+          tableId,
+          timestamp: new Date().toISOString(),
+        });
+        return null;
+      }
+      
+      if (!privateData.holeCards) {
+        console.warn('[GameManager] Hole cards property missing in private data:', {
+          playerId,
+          tableId,
           privateData,
           timestamp: new Date().toISOString(),
         });
         return null;
       }
       
+      if (!Array.isArray(privateData.holeCards)) {
+        console.warn('[GameManager] Hole cards is not an array:', {
+          playerId,
+          tableId,
+          holeCardsType: typeof privateData.holeCards,
+          timestamp: new Date().toISOString(),
+        });
+        return null;
+      }
+      
+      if (privateData.holeCards.length !== 2) {
+        console.warn('[GameManager] Incorrect number of hole cards:', {
+          playerId,
+          tableId,
+          cardCount: privateData.holeCards.length,
+          timestamp: new Date().toISOString(),
+        });
+        return null;
+      }
+      
+      // Validate each card has suit and rank
+      const validCards = privateData.holeCards.every(card => 
+        card && typeof card === 'object' && 'suit' in card && 'rank' in card);
+      
+      if (!validCards) {
+        console.warn('[GameManager] Invalid card format in hole cards:', {
+          playerId,
+          tableId,
+          cards: privateData.holeCards,
+          timestamp: new Date().toISOString(),
+        });
+        return null;
+      }
+      
+      console.log('[GameManager] Successfully retrieved hole cards:', {
+        playerId,
+        tableId,
+        timestamp: new Date().toISOString(),
+      });
+      
       return privateData.holeCards;
     } catch (error) {
       console.error('[GameManager] Error getting player hole cards:', {
         playerId,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        tableId,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack
+        } : 'Unknown error',
         timestamp: new Date().toISOString()
       });
       return null;
@@ -1618,20 +2097,199 @@ export class GameManager {
       throw error;
     }
   }
-}
 
-export async function getTableData(tableId: string): Promise<Table | null> {
-  try {
-    const tableRef = ref(database, `tables/${tableId}`);
-    const snapshot = await get(tableRef);
-    
-    if (!snapshot.exists()) {
-      return null;
+  private async initializePrivatePlayerData(playerId: string, holeCards: Card[]): Promise<void> {
+    try {
+      const privateRef = this.getPrivatePlayerRef(playerId);
+      
+      // Check if private data already exists
+      const snapshot = await get(privateRef);
+      if (snapshot.exists()) {
+        console.log('[GameManager] Private player data already exists, updating:', {
+          playerId,
+          tableId: this.tableRef.key,
+          timestamp: new Date().toISOString(),
+        });
+        
+        // Update existing data
+        await update(privateRef, {
+          holeCards,
+          lastUpdated: Date.now()
+        });
+        
+        console.log('[GameManager] Private player data updated successfully:', {
+          playerId,
+          tableId: this.tableRef.key,
+          cards: JSON.stringify(holeCards),
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        // Create new data
+        const privateData: PrivatePlayerData = {
+          holeCards,
+          lastUpdated: Date.now()
+        };
+        
+        console.log('[GameManager] Initializing private player data:', {
+          playerId,
+          tableId: this.tableRef.key,
+          cards: JSON.stringify(holeCards),
+          timestamp: new Date().toISOString(),
+        });
+        
+        await set(privateRef, privateData);
+        
+        console.log('[GameManager] Private player data initialized successfully:', {
+          playerId,
+          tableId: this.tableRef.key,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (error) {
+      console.error('[GameManager] Error initializing private player data:', {
+        playerId,
+        tableId: this.tableRef.key,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack
+        } : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
     }
+  }
 
-    return snapshot.val() as Table;
-  } catch (error) {
-    console.error('[getTableData] Error fetching table data:', error);
-    throw error;
+  /**
+   * Logs the current state of the table for debugging purposes
+   */
+  public async logTableState(context: string = 'debug'): Promise<void> {
+    const debugId = `debug-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      const table = await this.getTable();
+      if (!table) {
+        console.error('[GameManager] Cannot log table state - table not found:', {
+          debugId,
+          context,
+          tableId: this.tableRef.key,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const activePlayers = table.players.filter(p => p.isActive);
+      const nonFoldedPlayers = activePlayers.filter(p => !p.hasFolded);
+      
+      console.log('[GameManager] Current table state:', {
+        debugId,
+        context,
+        tableId: this.tableRef.key,
+        phase: table.phase,
+        pot: table.pot,
+        currentBet: table.currentBet,
+        smallBlind: table.smallBlind,
+        bigBlind: table.bigBlind,
+        dealerPosition: table.dealerPosition,
+        currentPlayerIndex: table.currentPlayerIndex,
+        currentPlayer: table.players[table.currentPlayerIndex]?.name,
+        roundBets: table.roundBets,
+        bettingRound: table.bettingRound,
+        isHandInProgress: table.isHandInProgress,
+        communityCards: table.communityCards,
+        playerCount: table.players.length,
+        activePlayers: activePlayers.length,
+        nonFoldedPlayers: nonFoldedPlayers.length,
+        players: table.players.map(p => ({
+          id: p.id,
+          name: p.name,
+          chips: p.chips,
+          isActive: p.isActive,
+          hasFolded: p.hasFolded,
+        })),
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('[GameManager] Error logging table state:', {
+        debugId,
+        context,
+        tableId: this.tableRef.key,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  private async updateTable(updates: Partial<Table>): Promise<void> {
+    try {
+      console.log('[GameManager] Updating table with:', {
+        tableId: this.tableRef.key,
+        updates: {
+          phase: updates.phase,
+          pot: updates.pot,
+          dealerPosition: updates.dealerPosition,
+          currentPlayerIndex: updates.currentPlayerIndex,
+        },
+        timestamp: new Date().toISOString(),
+      });
+      
+      await update(this.tableRef, updates);
+      
+      console.log('[GameManager] Table updated successfully:', {
+        tableId: this.tableRef.key,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('[GameManager] Error updating table:', {
+        tableId: this.tableRef.key,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
+    }
+  }
+
+  // Helper method to get the next active player index
+  private getNextActivePlayerIndex(table: Table, currentIndex: number): number {
+    let nextIndex = (currentIndex + 1) % table.players.length;
+    let loopCount = 0;
+    
+    // Find the next active player with chips
+    while (
+      loopCount < table.players.length && 
+      (!table.players[nextIndex].isActive || table.players[nextIndex].chips <= 0 || table.players[nextIndex].hasFolded)
+    ) {
+      nextIndex = (nextIndex + 1) % table.players.length;
+      loopCount++;
+    }
+    
+    // If we've gone through all players and found none active, return the original index
+    if (loopCount >= table.players.length) {
+      console.warn('[GameManager] No active players found when getting next player index:', {
+        currentIndex,
+        playerCount: table.players.length,
+        timestamp: new Date().toISOString(),
+      });
+      return currentIndex;
+    }
+    
+    return nextIndex;
+  }
+
+  // Static method to get table data
+  static async getTableData(tableId: string): Promise<Table | null> {
+    try {
+      const tableRef = ref(database, `tables/${tableId}`);
+      const snapshot = await get(tableRef);
+      
+      if (!snapshot.exists()) {
+        return null;
+      }
+
+      return snapshot.val() as Table;
+    } catch (error) {
+      console.error('[getTableData] Error fetching table data:', error);
+      throw error;
+    }
   }
 } 

@@ -26,6 +26,8 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
   const [showCards, setShowCards] = useState(false);
   const [isAuthenticatedPlayer, setIsAuthenticatedPlayer] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isLoadingCards, setIsLoadingCards] = useState(false);
+  const [cardLoadError, setCardLoadError] = useState<string | null>(null);
   const { user } = useAuth(); // Use the auth context instead of direct Firebase auth
   const retryCount = useRef(0);
   const mounted = useRef(true);
@@ -44,24 +46,57 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
   }, [table.id]);
 
   const loadHoleCards = useCallback(async () => {
+    // Reset error state
+    setCardLoadError(null);
+    setIsLoadingCards(true);
+    
     const requestId = Math.random().toString(36).substring(7);
     currentRequestRef.current = requestId;
+    const isValidGamePhase = ['preflop', 'flop', 'turn', 'river', 'showdown'].includes(table.phase);
+    
     console.log('[PlayerPosition] Starting card load:', {
       requestId,
       playerId: player.id,
       userId: user?.uid,
       isHandInProgress: table.isHandInProgress,
+      isValidGamePhase,
+      phase: table.phase,
       timestamp: new Date().toISOString(),
     });
 
-    if (!user || !table.isHandInProgress) {
-      console.log('[PlayerPosition] Skipping card load - conditions not met:', {
+    if (!user) {
+      console.log('[PlayerPosition] Skipping card load - no authenticated user:', {
         requestId,
         playerId: player.id,
-        isAuthenticated: !!user,
-        isHandInProgress: table.isHandInProgress,
         timestamp: new Date().toISOString(),
       });
+      setIsLoadingCards(false);
+      return;
+    }
+
+    // Check if we're in a valid state to load cards
+    if (!table.isHandInProgress && !isValidGamePhase) {
+      console.log('[PlayerPosition] Skipping card load - no hand in progress and invalid game phase:', {
+        requestId,
+        playerId: player.id,
+        isHandInProgress: table.isHandInProgress,
+        isValidGamePhase,
+        phase: table.phase,
+        timestamp: new Date().toISOString(),
+      });
+      setIsLoadingCards(false);
+      return;
+    }
+
+    // Check if this player is the authenticated user
+    if (user.uid !== player.id) {
+      console.log('[PlayerPosition] Skipping card load - not the authenticated player:', {
+        requestId,
+        playerId: player.id,
+        userId: user.uid,
+        timestamp: new Date().toISOString(),
+      });
+      setIsLoadingCards(false);
       return;
     }
 
@@ -73,8 +108,16 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
           currentRequest: currentRequestRef.current,
           timestamp: new Date().toISOString(),
         });
+        setIsLoadingCards(false);
         return;
       }
+
+      console.log('[PlayerPosition] Calling getPlayerHoleCards:', {
+        requestId,
+        playerId: player.id,
+        phase: table.phase,
+        timestamp: new Date().toISOString(),
+      });
 
       const cards = await gameManagerRef.current.getPlayerHoleCards(player.id);
       
@@ -85,25 +128,41 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
           currentRequest: currentRequestRef.current,
           timestamp: new Date().toISOString(),
         });
+        setIsLoadingCards(false);
         return;
       }
+
+      console.log('[PlayerPosition] Received response from getPlayerHoleCards:', {
+        requestId,
+        playerId: player.id,
+        hasCards: !!cards,
+        cardsLength: cards ? cards.length : 0,
+        cards: cards ? JSON.stringify(cards) : null,
+        timestamp: new Date().toISOString(),
+      });
 
       if (!cards || !Array.isArray(cards) || cards.length !== 2) {
         console.warn('[PlayerPosition] Invalid cards received:', {
           requestId,
           playerId: player.id,
-          cards,
+          cards: cards ? JSON.stringify(cards) : null,
+          phase: table.phase,
           timestamp: new Date().toISOString(),
         });
         
-        // Implement exponential backoff for retries
-        const retryDelay = Math.min(1000 * Math.pow(2, retryCount.current), 8000);
-        if (retryCount.current < 3) {
+        const isValidGamePhase = ['preflop', 'flop', 'turn', 'river', 'showdown'].includes(table.phase);
+        // Only retry if we're in a valid game phase
+        if ((table.isHandInProgress || isValidGamePhase) && retryCount.current < 3) {
+          // Implement exponential backoff for retries
+          const retryDelay = Math.min(1000 * Math.pow(2, retryCount.current), 8000);
           console.log('[PlayerPosition] Scheduling retry:', {
             requestId,
             playerId: player.id,
             retryCount: retryCount.current,
             delay: retryDelay,
+            phase: table.phase,
+            isHandInProgress: table.isHandInProgress,
+            isValidGamePhase,
             timestamp: new Date().toISOString(),
           });
           
@@ -113,14 +172,34 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
               loadHoleCards();
             }
           }, retryDelay);
-        } else {
+        } else if (retryCount.current >= 3) {
           console.error('[PlayerPosition] Max retries reached:', {
             requestId,
             playerId: player.id,
             retryCount: retryCount.current,
+            phase: table.phase,
+            timestamp: new Date().toISOString(),
+          });
+          
+          // Set a user-friendly error message based on the game phase
+          if (table.phase === 'waiting') {
+            setCardLoadError("No active hand in progress.");
+          } else if (table.phase === 'showdown') {
+            setCardLoadError("Hand is complete. Waiting for next hand.");
+          } else {
+            setCardLoadError("Couldn't load your cards. Please try refreshing the page.");
+          }
+          setIsLoadingCards(false);
+        } else {
+          // If we're not in a valid game phase, just clear the retry counter
+          console.log('[PlayerPosition] Not retrying - invalid game phase:', {
+            requestId,
+            playerId: player.id,
+            phase: table.phase,
             timestamp: new Date().toISOString(),
           });
           retryCount.current = 0;
+          setIsLoadingCards(false);
         }
         return;
       }
@@ -128,13 +207,15 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
       console.log('[PlayerPosition] Successfully loaded cards:', {
         requestId,
         playerId: player.id,
+        cards: JSON.stringify(cards),
         timestamp: new Date().toISOString(),
       });
 
       if (mounted.current) {
         setHoleCards(cards);
-        setShowCards(isAuthenticatedPlayer);
+        setShowCards(true); // Always show cards for the authenticated player
         retryCount.current = 0;
+        setIsLoadingCards(false);
       }
     } catch (error) {
       console.error('[PlayerPosition] Error loading cards:', {
@@ -144,8 +225,12 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
           message: error.message,
           stack: error.stack,
         } : 'Unknown error',
+        phase: table.phase,
         timestamp: new Date().toISOString(),
       });
+
+      // Set a user-friendly error message
+      setCardLoadError("Error loading cards. Please try refreshing the page.");
 
       // Implement exponential backoff for error retries
       const retryDelay = Math.min(1000 * Math.pow(2, retryCount.current), 8000);
@@ -155,6 +240,7 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
           playerId: player.id,
           retryCount: retryCount.current,
           delay: retryDelay,
+          phase: table.phase,
           timestamp: new Date().toISOString(),
         });
         
@@ -169,12 +255,14 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
           requestId,
           playerId: player.id,
           retryCount: retryCount.current,
+          phase: table.phase,
           timestamp: new Date().toISOString(),
         });
         retryCount.current = 0;
+        setIsLoadingCards(false);
       }
     }
-  }, [gameManagerRef, player.id, user, table.isHandInProgress, isAuthenticatedPlayer]);
+  }, [gameManagerRef, player.id, user, table.isHandInProgress, table.phase]);
 
   useEffect(() => {
     // Set authentication state based on auth context
@@ -187,7 +275,12 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
         timestamp: new Date().toISOString(),
       });
       setIsAuthenticatedPlayer(isAuthenticated);
-      setShowCards(isAuthenticated);
+      
+      // Only set showCards to true if we have cards to show
+      if (isAuthenticated && holeCards.length === 2) {
+        setShowCards(true);
+      }
+      
       setAuthError(null);
     } else {
       console.log('[PlayerPosition] No authenticated user:', {
@@ -198,24 +291,65 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
       setShowCards(false);
       setAuthError('Not authenticated');
     }
-  }, [user, player.id]);
+  }, [user, player.id, holeCards.length]);
 
   // Load hole cards when hand is in progress and player is authenticated
   useEffect(() => {
-    if (table.isHandInProgress && isAuthenticatedPlayer) {
+    const isValidGamePhase = ['preflop', 'flop', 'turn', 'river', 'showdown'].includes(table.phase);
+    if ((table.isHandInProgress || isValidGamePhase) && isAuthenticatedPlayer) {
       console.log('[PlayerPosition] Loading hole cards:', {
         playerId: player.id,
         isHandInProgress: table.isHandInProgress,
+        isValidGamePhase,
         isAuthenticatedPlayer,
+        phase: table.phase,
         timestamp: new Date().toISOString(),
       });
+      // Reset error state and retry count when conditions change
+      setCardLoadError(null);
+      retryCount.current = 0;
       loadHoleCards();
     } else {
-      // Clear hole cards when hand is not in progress
-      setHoleCards([]);
-      setShowCards(false);
+      console.log('[PlayerPosition] Not loading hole cards - conditions not met:', {
+        playerId: player.id,
+        isHandInProgress: table.isHandInProgress,
+        isValidGamePhase: ['preflop', 'flop', 'turn', 'river', 'showdown'].includes(table.phase),
+        isAuthenticatedPlayer,
+        phase: table.phase,
+        timestamp: new Date().toISOString(),
+      });
+      
+      // Only clear hole cards when hand is not in progress and not in a valid game phase
+      if (!table.isHandInProgress && !['preflop', 'flop', 'turn', 'river', 'showdown'].includes(table.phase)) {
+        setHoleCards([]);
+        setShowCards(false);
+      }
+      
+      setCardLoadError(null);
+      retryCount.current = 0;
     }
-  }, [table.isHandInProgress, isAuthenticatedPlayer, player.id, loadHoleCards]);
+  }, [table.isHandInProgress, isAuthenticatedPlayer, player.id, loadHoleCards, table.phase]);
+
+  // Add a new effect to handle phase changes
+  useEffect(() => {
+    const isValidGamePhase = ['preflop', 'flop', 'turn', 'river', 'showdown'].includes(table.phase);
+    // If phase changes and we have no cards, try loading them again
+    if ((table.isHandInProgress || isValidGamePhase) && isAuthenticatedPlayer && 
+        (holeCards.length === 0 || table.phase === 'preflop')) {
+      console.log('[PlayerPosition] Phase changed or preflop detected, loading cards:', {
+        playerId: player.id,
+        phase: table.phase,
+        isHandInProgress: table.isHandInProgress,
+        isValidGamePhase,
+        holeCardsLength: holeCards.length,
+        timestamp: new Date().toISOString(),
+      });
+      // Reset error state and retry count
+      setCardLoadError(null);
+      retryCount.current = 0;
+      loadHoleCards();
+    }
+  }, [table.phase, table.isHandInProgress, isAuthenticatedPlayer, player.id, loadHoleCards, holeCards.length]);
 
   // Calculate position around an ellipse
   const getPosition = () => {
@@ -249,7 +383,7 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
           <div className="text-xs">Chips: {player.chips}</div>
           {isCurrentPlayer && (
             <div className="text-xs text-yellow-300 font-semibold mt-1">
-              Your Turn
+              Current Turn
             </div>
           )}
           {isAuthenticatedPlayer && (
@@ -289,6 +423,14 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
             ))
           )}
         </div>
+
+        {/* Show loading state or error for cards */}
+        {isAuthenticatedPlayer && isLoadingCards && (
+          <div className="text-xs text-yellow-300 mt-1">Loading cards...</div>
+        )}
+        {isAuthenticatedPlayer && cardLoadError && (
+          <div className="text-xs text-red-300 mt-1">{cardLoadError}</div>
+        )}
       </div>
     </div>
   );

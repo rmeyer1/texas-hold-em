@@ -159,6 +159,29 @@ export const PokerTable: React.FC<PokerTableProps> = ({
   const phase = sanitizedTable.phase;
   const communityCards = sanitizedTable.communityCards;
   const isHandInProgress = sanitizedTable.isHandInProgress;
+  
+  // Get the active player (whose turn it is)
+  const activePlayerIndex = sanitizedTable.currentPlayerIndex;
+  const activePlayer = activePlayerIndex >= 0 && activePlayerIndex < players.length 
+    ? players[activePlayerIndex] 
+    : undefined;
+  
+  // Check if it's the authenticated user's turn
+  const isPlayerTurn = currentPlayerId && 
+    activePlayer && 
+    activePlayer.id === currentPlayerId;
+    
+  // Debug log for player turn
+  if (currentPlayerId) {
+    console.log('[PokerTable] Player turn check:', {
+      isPlayerTurn,
+      currentPlayerId,
+      activePlayerIndex,
+      activePlayerId: activePlayer?.id,
+      match: activePlayer?.id === currentPlayerId,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   // Validate that all players have the required properties
   const validPlayers = players.filter((player): player is Player => {
@@ -224,7 +247,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({
               key={player.id}
               player={player}
               isDealer={index === dealerPosition}
-              isCurrentPlayer={player.id === currentPlayerId}
+              isCurrentPlayer={index === activePlayerIndex}
               position={index}
               totalPlayers={validPlayers.length}
               table={sanitizedTable}
@@ -247,33 +270,49 @@ export const PokerTable: React.FC<PokerTableProps> = ({
         </div>
       </div>
 
-      {/* Action buttons and timer for current player - Moved outside table container */}
+      {/* Action buttons and timer for current player - Only show for the authenticated player */}
       {currentPlayerId && currentPlayer && !currentPlayer.hasFolded && (
         <div className="mt-6 flex flex-col items-center gap-4 p-4 bg-gray-800 rounded-lg shadow-lg">
+          {/* Turn indicator */}
+          <div className="text-center mb-2">
+            {isPlayerTurn ? (
+              <div className="text-yellow-400 font-bold text-lg animate-pulse">
+                Your Turn
+              </div>
+            ) : (
+              <div className="text-gray-400 text-lg">
+                Waiting for your turn...
+              </div>
+            )}
+          </div>
+          
           {/* Turn Timer */}
           <div className="flex justify-center mb-2">
-            <TurnTimer table={sanitizedTable} isCurrentPlayer={true} />
+            <TurnTimer table={sanitizedTable} isCurrentPlayer={isPlayerTurn || false} />
           </div>
 
           <div className="flex flex-wrap justify-center gap-3">
             <button
               className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               onClick={() => onPlayerAction?.('fold')}
-              disabled={!onPlayerAction || currentPlayer.hasFolded}
+              disabled={!onPlayerAction || currentPlayer.hasFolded || !isPlayerTurn}
+              title={!isPlayerTurn ? "Wait for your turn" : currentPlayer.hasFolded ? "You have already folded" : ""}
             >
               Fold
             </button>
             <button
               className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               onClick={() => onPlayerAction?.('check')}
-              disabled={!onPlayerAction || currentBet > 0}
+              disabled={!onPlayerAction || currentBet > 0 || !isPlayerTurn}
+              title={!isPlayerTurn ? "Wait for your turn" : currentBet > 0 ? "Cannot check when there is a bet" : ""}
             >
               Check
             </button>
             <button
               className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               onClick={() => onPlayerAction?.('call')}
-              disabled={!onPlayerAction || currentBet === 0}
+              disabled={!onPlayerAction || currentBet === 0 || !isPlayerTurn}
+              title={!isPlayerTurn ? "Wait for your turn" : currentBet === 0 ? "No bet to call" : ""}
             >
               Call ${currentBet}
             </button>
@@ -284,7 +323,8 @@ export const PokerTable: React.FC<PokerTableProps> = ({
                 placeholder="Amount"
                 min={currentBet * 2}
                 max={currentPlayer.chips}
-                disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2}
+                disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2 || !isPlayerTurn}
+                title={!isPlayerTurn ? "Wait for your turn" : currentPlayer.chips < currentBet * 2 ? "Not enough chips to raise" : ""}
               />
               <button
                 className="px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -295,7 +335,8 @@ export const PokerTable: React.FC<PokerTableProps> = ({
                     onPlayerAction?.('raise', amount);
                   }
                 }}
-                disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2}
+                disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2 || !isPlayerTurn}
+                title={!isPlayerTurn ? "Wait for your turn" : currentPlayer.chips < currentBet * 2 ? "Not enough chips to raise" : ""}
               >
                 Raise
               </button>

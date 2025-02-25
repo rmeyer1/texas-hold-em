@@ -30,14 +30,26 @@ export class Deck {
   }
 
   public dealCard(): Card | undefined {
+    // If deck is empty, reset it
+    if (this.cards.length === 0) {
+      console.warn('[Deck] Deck is empty, resetting');
+      this.reset();
+    }
     return this.cards.pop();
   }
 
   public dealHoleCards(): [Card, Card] | undefined {
+    // If deck doesn't have enough cards, reset it
+    if (this.cards.length < 2) {
+      console.warn('[Deck] Not enough cards for hole cards, resetting deck');
+      this.reset();
+    }
+    
     const card1 = this.dealCard();
     const card2 = this.dealCard();
     
     if (!card1 || !card2) {
+      console.error('[Deck] Failed to deal hole cards even after reset');
       return undefined;
     }
 
@@ -45,11 +57,18 @@ export class Deck {
   }
 
   public dealFlop(): [Card, Card, Card] | undefined {
+    // If deck doesn't have enough cards, reset it
+    if (this.cards.length < 3) {
+      console.warn('[Deck] Not enough cards for flop, resetting deck');
+      this.reset();
+    }
+    
     const card1 = this.dealCard();
     const card2 = this.dealCard();
     const card3 = this.dealCard();
 
     if (!card1 || !card2 || !card3) {
+      console.error('[Deck] Failed to deal flop even after reset');
       return undefined;
     }
 

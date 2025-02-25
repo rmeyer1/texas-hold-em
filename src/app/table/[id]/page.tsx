@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { TablePageClient } from '@/components/pages/TablePageClient';
 import { Suspense } from 'react';
-import { getTableData } from '@/services/gameManager';
+import { GameManager } from '@/services/gameManager';
 
 interface PageProps {
   params: Promise<{
@@ -18,7 +18,7 @@ async function TableLoader({ tableId }: { tableId: string }) {
 
   try {
     // Pre-fetch table data on the server
-    const tableData = await getTableData(tableId);
+    const tableData = await GameManager.getTableData(tableId);
     
     console.log('[TableLoader] Table data fetched:', {
       tableId,

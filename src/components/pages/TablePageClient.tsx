@@ -173,77 +173,249 @@ export const TablePageClient = ({ tableId, initialData }: TablePageClientProps):
     action: 'fold' | 'check' | 'call' | 'raise',
     amount?: number
   ): Promise<void> => {
-    if (!tableState || !currentPlayerId || !gameManager) return;
+    const actionId = `action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    console.log('[TablePageClient] Player action initiated:', {
+      actionId,
+      action,
+      amount,
+      playerId: currentPlayerId,
+      timestamp: new Date().toISOString(),
+    });
+    
+    if (!tableState || !currentPlayerId || !gameManager) {
+      console.error('[TablePageClient] Cannot handle player action - missing required data:', {
+        actionId,
+        hasTableState: !!tableState,
+        hasCurrentPlayerId: !!currentPlayerId,
+        hasGameManager: !!gameManager,
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
+    // Log the table state before the action
+    await gameManager.logTableState(`before-${action}`);
 
     try {
       let actionTaken = false;
       switch (action) {
         case 'fold':
+          console.log('[TablePageClient] Player folding:', {
+            actionId,
+            playerId: currentPlayerId,
+            timestamp: new Date().toISOString(),
+          });
           await gameManager.foldPlayer(currentPlayerId);
           actionTaken = true;
           break;
         case 'check':
+          console.log('[TablePageClient] Player checking:', {
+            actionId,
+            playerId: currentPlayerId,
+            timestamp: new Date().toISOString(),
+          });
           await gameManager.handlePlayerAction(currentPlayerId, 'check');
           actionTaken = true;
           break;
         case 'call':
+          console.log('[TablePageClient] Player calling:', {
+            actionId,
+            playerId: currentPlayerId,
+            currentBet: tableState.currentBet,
+            timestamp: new Date().toISOString(),
+          });
           await gameManager.callBet(currentPlayerId);
           actionTaken = true;
           break;
         case 'raise':
           if (amount) {
+            console.log('[TablePageClient] Player raising:', {
+              actionId,
+              playerId: currentPlayerId,
+              amount,
+              currentBet: tableState.currentBet,
+              timestamp: new Date().toISOString(),
+            });
             await gameManager.raiseBet(currentPlayerId, amount);
             actionTaken = true;
+          } else {
+            console.warn('[TablePageClient] Raise action missing amount:', {
+              actionId,
+              playerId: currentPlayerId,
+              timestamp: new Date().toISOString(),
+            });
           }
           break;
       }
 
       if (actionTaken) {
+        console.log('[TablePageClient] Action taken successfully, waiting for processing:', {
+          actionId,
+          action,
+          timestamp: new Date().toISOString(),
+        });
+        
         // Wait a short moment for the action to be processed
         await new Promise(resolve => setTimeout(resolve, 500));
 
+        // Log the table state after the action
+        await gameManager.logTableState(`after-${action}`);
+
         // Get updated table state after action
         const updatedState = await gameManager.getTableState();
-        if (!updatedState) return;
+        if (!updatedState) {
+          console.error('[TablePageClient] Failed to get updated table state after action:', {
+            actionId,
+            action,
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
+        console.log('[TablePageClient] Updated table state after action:', {
+          actionId,
+          phase: updatedState.phase,
+          pot: updatedState.pot,
+          currentBet: updatedState.currentBet,
+          roundBets: updatedState.roundBets,
+          timestamp: new Date().toISOString(),
+        });
 
         // Only proceed with phase transitions if all players have acted
-        const allPlayersActed = updatedState.players
-          .filter(p => p.isActive && !p.hasFolded && p.chips > 0)
-          .every(p => 
-            (updatedState.roundBets[p.id] === updatedState.currentBet) || 
-            p.chips === 0
-          );
+        const activePlayers = updatedState.players.filter(p => p.isActive && !p.hasFolded && p.chips > 0);
+        const allPlayersActed = activePlayers.every(p => 
+          (updatedState.roundBets[p.id] === updatedState.currentBet) || 
+          p.chips === 0
+        );
+
+        console.log('[TablePageClient] Checking if all players have acted:', {
+          actionId,
+          allPlayersActed,
+          activePlayers: activePlayers.map(p => ({
+            id: p.id,
+            name: p.name,
+            bet: updatedState.roundBets[p.id],
+            chips: p.chips,
+            hasActed: (updatedState.roundBets[p.id] === updatedState.currentBet) || p.chips === 0
+          })),
+          currentBet: updatedState.currentBet,
+          timestamp: new Date().toISOString(),
+        });
 
         if (allPlayersActed) {
+          console.log('[TablePageClient] All players have acted, advancing game phase:', {
+            actionId,
+            currentPhase: updatedState.phase,
+            timestamp: new Date().toISOString(),
+          });
+          
           try {
             switch (updatedState.phase) {
               case 'preflop':
+                console.log('[TablePageClient] Dealing flop:', {
+                  actionId,
+                  timestamp: new Date().toISOString(),
+                });
                 await gameManager.dealFlop();
+                await gameManager.logTableState('after-deal-flop');
                 break;
               case 'flop':
+                console.log('[TablePageClient] Dealing turn:', {
+                  actionId,
+                  timestamp: new Date().toISOString(),
+                });
                 await gameManager.dealTurn();
+                await gameManager.logTableState('after-deal-turn');
                 break;
               case 'turn':
+                console.log('[TablePageClient] Dealing river:', {
+                  actionId,
+                  timestamp: new Date().toISOString(),
+                });
                 await gameManager.dealRiver();
+                await gameManager.logTableState('after-deal-river');
                 break;
               case 'river':
+                console.log('[TablePageClient] River phase complete, scheduling new hand:', {
+                  actionId,
+                  timestamp: new Date().toISOString(),
+                });
+                await gameManager.logTableState('before-new-hand-scheduled');
                 // Start a new hand after a delay
                 setTimeout(async () => {
+                  const newHandId = `newhand-${Date.now()}-${Math.random().toString(36).slice(2)}`;
                   try {
+                    console.log('[TablePageClient] Starting new hand after river phase:', {
+                      actionId,
+                      newHandId,
+                      timestamp: new Date().toISOString(),
+                    });
+                    
+                    // Get current table state before starting new hand
+                    const beforeState = await gameManager.getTableState();
+                    console.log('[TablePageClient] Table state before starting new hand:', {
+                      actionId,
+                      newHandId,
+                      phase: beforeState?.phase,
+                      pot: beforeState?.pot,
+                      smallBlind: beforeState?.smallBlind,
+                      bigBlind: beforeState?.bigBlind,
+                      timestamp: new Date().toISOString(),
+                    });
+                    
+                    await gameManager.logTableState('before-start-new-hand');
                     await gameManager.startNewHand();
+                    await gameManager.logTableState('after-start-new-hand');
+                    
+                    // Get updated table state after starting new hand
+                    const afterState = await gameManager.getTableState();
+                    console.log('[TablePageClient] New hand started successfully:', {
+                      actionId,
+                      newHandId,
+                      phase: afterState?.phase,
+                      pot: afterState?.pot,
+                      smallBlind: afterState?.smallBlind,
+                      bigBlind: afterState?.bigBlind,
+                      roundBets: afterState?.roundBets,
+                      timestamp: new Date().toISOString(),
+                    });
                   } catch (error) {
-                    console.error('[TablePageClient] Error starting new hand after river:', error);
+                    console.error('[TablePageClient] Error starting new hand after river:', {
+                      actionId,
+                      newHandId,
+                      error: error instanceof Error ? error.message : 'Unknown error',
+                      stack: error instanceof Error ? error.stack : undefined,
+                      timestamp: new Date().toISOString(),
+                    });
                   }
                 }, 3000);
                 break;
             }
           } catch (error) {
-            console.error('[TablePageClient] Error advancing game phase:', error);
+            console.error('[TablePageClient] Error advancing game phase:', {
+              actionId,
+              phase: updatedState.phase,
+              error: error instanceof Error ? error.message : 'Unknown error',
+              stack: error instanceof Error ? error.stack : undefined,
+              timestamp: new Date().toISOString(),
+            });
           }
         }
+      } else {
+        console.log('[TablePageClient] No action taken:', {
+          actionId,
+          action,
+          timestamp: new Date().toISOString(),
+        });
       }
     } catch (error) {
-      console.error('Error handling player action:', error);
+      console.error('[TablePageClient] Error handling player action:', {
+        actionId,
+        action,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        timestamp: new Date().toISOString(),
+      });
     }
   };
 
@@ -285,7 +457,7 @@ export const TablePageClient = ({ tableId, initialData }: TablePageClientProps):
       {tableState && (
         <PokerTable
           table={tableState}
-          currentPlayerId={currentPlayerId}
+          currentPlayerId={user?.uid}
           onPlayerAction={handlePlayerAction}
           onStartGame={tableState.phase === 'waiting' ? handleStartGame : undefined}
           isStartingGame={isStartingGame}
