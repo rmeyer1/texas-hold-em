@@ -12,6 +12,7 @@ interface PlayerPositionProps {
   position: number;
   totalPlayers: number;
   table: Table;
+  isMobile?: boolean;
 }
 
 export const PlayerPosition: React.FC<PlayerPositionProps> = ({
@@ -21,6 +22,7 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
   position,
   totalPlayers,
   table,
+  isMobile = false,
 }) => {
   const [holeCards, setHoleCards] = useState<Card[]>([]);
   const [showCards, setShowCards] = useState(false);
@@ -33,6 +35,9 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
   const mounted = useRef(true);
   const currentRequestRef = useRef('');
   const gameManagerRef = useRef(new GameManager(table.id));
+
+  // Determine card size based on mobile state
+  const cardSize = isMobile ? 'sm' : 'md';
 
   useEffect(() => {
     mounted.current = true;
@@ -353,84 +358,170 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
 
   // Calculate position around an ellipse
   const getPosition = () => {
+    // Adjust positions for mobile devices
+    if (isMobile) {
+      // Mobile-specific positioning logic
+      const positions = [
+        // Bottom positions (current player)
+        { top: '75%', left: '50%' },
+        // Left positions
+        { top: '60%', left: '15%' },
+        // Right positions
+        { top: '60%', left: '85%' },
+        // Top positions (further away)
+        { top: '20%', left: '30%' },
+        { top: '20%', left: '70%' },
+        // Additional positions if needed
+        { top: '40%', left: '20%' },
+        { top: '40%', left: '80%' },
+        { top: '30%', left: '50%' },
+      ];
+      
+      return positions[position % positions.length];
+    }
+    
+    // Original desktop positioning logic
     const angle = (position * (360 / totalPlayers) - 90) * (Math.PI / 180);
     const x = 50 + 40 * Math.cos(angle);
-    const y = 50 + 25 * Math.sin(angle);
+    const y = 50 + 40 * Math.sin(angle);
     return { x, y };
   };
 
-  const { x, y } = getPosition();
+  // Convert position to CSS style
+  const positionStyle = (() => {
+    const pos = getPosition();
+    
+    if ('top' in pos && 'left' in pos) {
+      // Mobile positioning
+      return {
+        top: pos.top,
+        left: pos.left,
+        transform: 'translate(-50%, -50%)',
+      } as React.CSSProperties;
+    } else {
+      // Desktop positioning
+      return {
+        top: `${pos.y}%`,
+        left: `${pos.x}%`,
+        transform: 'translate(-50%, -50%)',
+      } as React.CSSProperties;
+    }
+  })();
+
+  // Render player's hole cards
+  const renderHoleCards = () => {
+    if (isLoadingCards) {
+      return (
+        <div className="flex gap-1 items-center justify-center">
+          <div className="animate-pulse bg-gray-300/20 rounded-lg w-10 h-16 sm:w-14 sm:h-20"></div>
+          <div className="animate-pulse bg-gray-300/20 rounded-lg w-10 h-16 sm:w-14 sm:h-20 animate-delay-200"></div>
+        </div>
+      );
+    }
+
+    if (cardLoadError) {
+      return (
+        <div className="text-xs text-red-400 max-w-[120px] text-center">
+          {cardLoadError}
+        </div>
+      );
+    }
+
+    if (showCards && holeCards.length === 2) {
+      return (
+        <div className="flex gap-1 items-center justify-center">
+          <div className="transform rotate-[-5deg]">
+            <CardComponent card={holeCards[0]} size={cardSize} />
+          </div>
+          <div className="transform rotate-[5deg]">
+            <CardComponent card={holeCards[1]} size={cardSize} />
+          </div>
+        </div>
+      );
+    }
+
+    // Default: face down cards or no cards
+    return (
+      <div className="flex gap-1 items-center justify-center">
+        {table.isHandInProgress && !player.hasFolded ? (
+          <>
+            <div className="transform rotate-[-5deg]">
+              <CardComponent card={{ suit: 'spades', rank: 'A' }} faceDown size={cardSize} />
+            </div>
+            <div className="transform rotate-[5deg]">
+              <CardComponent card={{ suit: 'spades', rank: 'A' }} faceDown size={cardSize} />
+            </div>
+          </>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <div
-      className={`absolute transform -translate-x-1/2 -translate-y-1/2 ${
-        isCurrentPlayer ? 'ring-4 ring-yellow-400 rounded-lg p-1' : ''
+      className={`absolute ${
+        isCurrentPlayer ? 'z-20' : 'z-10'
       }`}
-      style={{ left: `${x}%`, top: `${y}%` }}
+      style={positionStyle}
     >
       <div className="flex flex-col items-center gap-1">
-        {/* Player info */}
-        <div
-          className={`p-2 rounded-lg ${
-            player.hasFolded 
-              ? 'bg-gray-700' 
-              : isCurrentPlayer 
-                ? 'bg-blue-600 animate-pulse' 
-                : 'bg-blue-900'
-          } text-white shadow-md transition-colors duration-300`}
+        {/* Player avatar and info */}
+        <div 
+          className={`
+            relative rounded-full p-1
+            ${isCurrentPlayer ? 'bg-yellow-400' : 'bg-gray-700'}
+            ${player.hasFolded ? 'opacity-50' : 'opacity-100'}
+            transition-all duration-300 ease-in-out
+            ${isCurrentPlayer ? 'animate-pulse-slow' : ''}
+          `}
         >
-          <div className="text-sm font-semibold">{player.name}</div>
-          <div className="text-xs">Chips: {player.chips}</div>
-          {isCurrentPlayer && (
-            <div className="text-xs text-yellow-300 font-semibold mt-1">
-              Current Turn
-            </div>
-          )}
-          {isAuthenticatedPlayer && (
-            <div className="text-xs text-green-300 font-semibold">
-              (You)
-            </div>
-          )}
-        </div>
-
-        {/* Dealer button */}
-        {isDealer && (
-          <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-white text-black text-xs flex items-center justify-center font-bold border border-gray-300">
-            D
+          <div className={`
+            flex flex-col items-center justify-center
+            rounded-full 
+            ${isCurrentPlayer ? 'bg-blue-900' : 'bg-gray-800'}
+            ${isMobile ? 'w-10 h-10' : 'w-12 h-12'}
+            text-white
+            overflow-hidden
+            relative
+          `}>
+            {/* Player identifier */}
+            <span className={`font-bold ${isMobile ? 'text-xs' : 'text-sm'}`}>
+              {player.name ? player.name.substring(0, 2).toUpperCase() : 'P'}
+            </span>
+            
+            {/* Player chips */}
+            <span className={`
+              absolute bottom-0 left-0 right-0
+              text-center bg-black/50 backdrop-blur-sm
+              ${isMobile ? 'text-[8px] py-0.5' : 'text-xs py-1'}
+              font-mono font-bold
+            `}>
+              {player.chips}
+            </span>
           </div>
-        )}
-
-        {/* Cards */}
-        <div className="flex gap-1">
-          {showCards && holeCards.length === 2 ? (
-            holeCards.map((card, index) => (
-              <CardComponent
-                key={`${card.suit}-${card.rank}-${index}`}
-                card={card}
-                faceDown={false}
-                className="transform scale-75"
-              />
-            ))
-          ) : (
-            // Show face down cards for other players or when cards aren't loaded
-            Array(2).fill(null).map((_, i) => (
-              <CardComponent
-                key={`facedown-${i}`}
-                card={{ suit: 'hearts', rank: '2' }} // Dummy card, will be shown face down
-                faceDown={true}
-                className="transform scale-75"
-              />
-            ))
+          
+          {/* Dealer button */}
+          {isDealer && (
+            <div className="absolute -top-2 -right-2 w-5 h-5 bg-white rounded-full flex items-center justify-center text-[10px] font-bold text-blue-900 border border-blue-900">
+              D
+            </div>
           )}
         </div>
-
-        {/* Show loading state or error for cards */}
-        {isAuthenticatedPlayer && isLoadingCards && (
-          <div className="text-xs text-yellow-300 mt-1">Loading cards...</div>
-        )}
-        {isAuthenticatedPlayer && cardLoadError && (
-          <div className="text-xs text-red-300 mt-1">{cardLoadError}</div>
-        )}
+        
+        {/* Player name - Improved for mobile */}
+        <div className={`
+          text-center px-2 py-1 rounded-md
+          ${isMobile ? 'max-w-[80px]' : 'max-w-[120px]'}
+          ${isCurrentPlayer ? 'bg-yellow-400 text-blue-900' : 'bg-gray-800 text-white'}
+          ${player.hasFolded ? 'line-through opacity-70' : ''}
+          ${isMobile ? 'text-xs' : 'text-sm'}
+          font-semibold truncate
+        `}>
+          {player.name || `Player ${position + 1}`}
+        </div>
+        
+        {/* Cards */}
+        {renderHoleCards()}
       </div>
     </div>
   );

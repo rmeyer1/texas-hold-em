@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Table, Player } from '@/types/poker';
 import { PlayerPosition } from './PlayerPosition';
 import { CommunityCards } from './CommunityCards';
 import { TurnTimer } from '../TurnTimer';
+import { getDatabase, ref, update, get } from 'firebase/database';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface PokerTableProps {
   table: Partial<Table>;
@@ -21,6 +23,69 @@ export const PokerTable: React.FC<PokerTableProps> = ({
   isStartingGame = false,
   hasEnoughPlayers = false,
 }) => {
+  const { user } = useAuth();
+  const [isMobile, setIsMobile] = useState(false);
+  const [raiseAmount, setRaiseAmount] = useState<number>(0);
+  
+  // Check if we're on mobile when component mounts
+  useEffect(() => {
+    const checkIfMobile = (): void => {
+      setIsMobile(window.innerWidth < 640);
+    };
+    
+    // Initial check
+    checkIfMobile();
+    
+    // Add event listener for window resize
+    window.addEventListener('resize', checkIfMobile);
+    
+    // Cleanup
+    return () => {
+      window.removeEventListener('resize', checkIfMobile);
+    };
+  }, []);
+
+  // Effect to ensure username is up to date in the table
+  useEffect(() => {
+    if (!user || !currentPlayerId || !user.displayName || !table?.id) return;
+
+    const refreshUsername = async (): Promise<void> => {
+      try {
+        const database = getDatabase();
+        const tablePath = `tables/${table.id}`;
+        const tableRef = ref(database, tablePath);
+        
+        // Get the current table data
+        const snapshot = await get(tableRef);
+        if (!snapshot.exists()) return;
+        
+        const tableData = snapshot.val();
+        
+        // Find the player in the table
+        const playerIndex = tableData.players.findIndex((player: { id: string }) => player.id === currentPlayerId);
+        
+        if (playerIndex !== -1) {
+          // Check if the name needs to be updated
+          if (tableData.players[playerIndex].name !== user.displayName) {
+            console.log(`Auto-refreshing player name to "${user.displayName}" in table ${table.id}`);
+            
+            // Create an update object with the path as key and new name as value
+            const updates: Record<string, string> = {};
+            // Ensure displayName is not null (we already check this in the useEffect guard)
+            updates[`${tablePath}/players/${playerIndex}/name`] = user.displayName || 'Player';
+            
+            await update(ref(database), updates);
+            console.log(`Successfully refreshed player name in table ${table.id}`);
+          }
+        }
+      } catch (error) {
+        console.error(`Error refreshing player name in table ${table.id}:`, error);
+      }
+    };
+
+    refreshUsername();
+  }, [user, currentPlayerId, table?.id]);
+
   const isValidTable = (table: Partial<Table>): { 
     isValid: boolean; 
     errors: string[]; 
@@ -196,20 +261,47 @@ export const PokerTable: React.FC<PokerTableProps> = ({
     );
   });
 
+  // Calculate current player's bet
+  const playerBet = currentPlayerId && sanitizedTable.roundBets 
+    ? (sanitizedTable.roundBets[currentPlayerId] || 0) 
+    : 0;
+
   return (
     <div className="relative w-full max-w-6xl mx-auto">
+      {/* TEXAS HOLD'EM Title - Centered above the table */}
+      <div className="w-full text-center mb-4">
+        <h1 className="text-3xl font-bold text-white tracking-wider">TEXAS HOLD'EM</h1>
+      </div>
+      
+      {/* Game status bar - Contains phase and pot information */}
+      <div className="w-full flex justify-between items-center mb-2 px-1 sm:px-2">
+        {/* Game phase indicator */}
+        <div className="text-white font-bold bg-black/50 px-2 sm:px-4 py-1 sm:py-2 rounded-lg backdrop-blur-sm flex items-center justify-center">
+          <span className="text-xs sm:text-sm md:text-base lg:text-lg whitespace-nowrap">
+            {phase.charAt(0).toUpperCase() + phase.slice(1)}
+          </span>
+        </div>
+        
+        {/* Pot display */}
+        <div className="text-white font-bold bg-black/50 px-2 sm:px-4 py-1 sm:py-2 rounded-lg backdrop-blur-sm flex items-center justify-center">
+          <span className="text-xs sm:text-sm md:text-base lg:text-lg whitespace-nowrap">
+            Pot: ${pot}
+          </span>
+        </div>
+      </div>
+      
       {/* Start Game Button - Moved outside table container for cleaner layout */}
       {!isHandInProgress && onStartGame && (
-        <div className="w-full flex justify-center mb-8">
+        <div className="w-full flex justify-center mb-4 sm:mb-8">
           <button
             onClick={onStartGame}
             disabled={isStartingGame || !hasEnoughPlayers}
             className={`
-              px-6 py-3 rounded-lg text-lg font-semibold shadow-lg
+              px-4 sm:px-6 py-2 sm:py-3 rounded-lg text-sm sm:text-lg font-semibold shadow-lg
               transition-all duration-200
               ${isStartingGame || !hasEnoughPlayers
                 ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-green-600 hover:bg-green-700 active:transform active:scale-95'
+                : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 active:transform active:scale-95'
               }
               text-white
             `}
@@ -227,120 +319,128 @@ export const PokerTable: React.FC<PokerTableProps> = ({
         </div>
       )}
 
-      {/* Table Container - Restored aspect ratio and added explicit height */}
-      <div className="relative w-full aspect-[2/1] h-[600px]">
-        {/* Table background */}
-        <div className="absolute inset-0 bg-green-800 rounded-[40%] shadow-xl border-8 border-brown-800">
-          {/* Pot display - Adjusted positioning */}
-          <div className="absolute top-[40%] left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-            <div className="text-white text-xl font-bold mb-2">Pot: ${pot}</div>
-          </div>
-
-          {/* Community cards - Adjusted positioning */}
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10">
-            <CommunityCards cards={communityCards} phase={phase} />
-          </div>
-
-          {/* Players */}
-          {validPlayers.map((player, index) => (
-            <PlayerPosition
-              key={player.id}
-              player={player}
-              isDealer={index === dealerPosition}
-              isCurrentPlayer={index === activePlayerIndex}
-              position={index}
-              totalPlayers={validPlayers.length}
-              table={sanitizedTable}
-            />
-          ))}
-
-          {/* Game phase indicator */}
-          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 text-white text-lg font-semibold">
-            {phase.charAt(0).toUpperCase() + phase.slice(1)}
-          </div>
-
-          {/* Last action display */}
-          {sanitizedTable.lastAction && sanitizedTable.lastActivePlayer && (
-            <div className="absolute top-4 right-4 text-white text-sm">
-              {typeof sanitizedTable.lastActivePlayer === 'string' 
-                ? sanitizedTable.lastActivePlayer 
-                : players.find(p => p.id === sanitizedTable.lastActivePlayer)?.name}: {sanitizedTable.lastAction}
+      {/* Table Container */}
+      <div className="relative w-full aspect-[2/1] h-[300px] sm:h-[400px] md:h-[500px] lg:h-[600px]">
+        {/* Table background - Updated with modern gradient and shadow */}
+        <div className="absolute inset-0 bg-gradient-to-b from-blue-900 to-blue-950 rounded-[40%] shadow-2xl border-4 border-blue-800">
+          {/* Inner felt texture */}
+          <div className="absolute inset-[4px] bg-gradient-to-b from-teal-800 to-teal-900 rounded-[39%]">
+            {/* Table rim highlight */}
+            <div className="absolute inset-0 rounded-[39%] bg-gradient-to-t from-transparent to-teal-700 opacity-20"></div>
+            
+            {/* Community cards - Adjusted positioning for better mobile display */}
+            <div className="absolute top-[30%] sm:top-[40%] md:top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 scale-[0.7] sm:scale-[0.8] md:scale-[0.9] lg:scale-100">
+              <CommunityCards cards={communityCards} phase={phase} />
             </div>
-          )}
+
+            {/* Players - With improved mobile positioning */}
+            <div className="absolute inset-0">
+              {validPlayers.map((player, index) => (
+                <PlayerPosition
+                  key={player.id}
+                  player={player}
+                  isDealer={index === dealerPosition}
+                  isCurrentPlayer={index === activePlayerIndex}
+                  position={index}
+                  totalPlayers={validPlayers.length}
+                  table={sanitizedTable}
+                  isMobile={isMobile}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Action buttons and timer for current player - Only show for the authenticated player */}
+      {/* Action buttons and timer for current player - Enhanced styling */}
       {currentPlayerId && currentPlayer && !currentPlayer.hasFolded && (
-        <div className="mt-6 flex flex-col items-center gap-4 p-4 bg-gray-800 rounded-lg shadow-lg">
+        <div className="mt-4 sm:mt-6 md:mt-8 flex flex-col items-center gap-1 sm:gap-2 p-2 sm:p-3 bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl shadow-2xl border border-gray-700">
           {/* Turn indicator */}
-          <div className="text-center mb-2">
+          <div className="text-center mb-0 sm:mb-1">
             {isPlayerTurn ? (
-              <div className="text-yellow-400 font-bold text-lg animate-pulse">
+              <div className="text-yellow-400 font-bold text-sm sm:text-lg animate-pulse">
                 Your Turn
               </div>
             ) : (
-              <div className="text-gray-400 text-lg">
+              <div className="text-gray-400 text-sm sm:text-lg">
                 Waiting for your turn...
               </div>
             )}
           </div>
           
-          {/* Turn Timer */}
-          <div className="flex justify-center mb-2">
-            <TurnTimer table={sanitizedTable} isCurrentPlayer={isPlayerTurn || false} />
-          </div>
-
-          <div className="flex flex-wrap justify-center gap-3">
-            <button
-              className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              onClick={() => onPlayerAction?.('fold')}
-              disabled={!onPlayerAction || currentPlayer.hasFolded || !isPlayerTurn}
-              title={!isPlayerTurn ? "Wait for your turn" : currentPlayer.hasFolded ? "You have already folded" : ""}
-            >
-              Fold
-            </button>
-            <button
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              onClick={() => onPlayerAction?.('check')}
-              disabled={!onPlayerAction || currentBet > 0 || !isPlayerTurn}
-              title={!isPlayerTurn ? "Wait for your turn" : currentBet > 0 ? "Cannot check when there is a bet" : ""}
-            >
-              Check
-            </button>
-            <button
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              onClick={() => onPlayerAction?.('call')}
-              disabled={!onPlayerAction || currentBet === 0 || !isPlayerTurn}
-              title={!isPlayerTurn ? "Wait for your turn" : currentBet === 0 ? "No bet to call" : ""}
-            >
-              Call ${currentBet}
-            </button>
-            <div className="flex gap-2">
+          {/* Reorganized layout - Action buttons and timer in a single row */}
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+            {/* Action buttons */}
+            <div className="flex flex-wrap justify-center gap-1 sm:gap-2">
+              <button
+                onClick={() => onPlayerAction && onPlayerAction('fold')}
+                disabled={!isPlayerTurn}
+                className={`px-3 sm:px-4 py-1 sm:py-2 rounded-md text-xs sm:text-base font-semibold ${
+                  isPlayerTurn
+                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                    : 'bg-gray-600 text-gray-300 cursor-not-allowed'
+                }`}
+              >
+                Fold
+              </button>
+              <button
+                onClick={() => onPlayerAction && onPlayerAction('check')}
+                disabled={!isPlayerTurn || (currentBet > playerBet)}
+                className={`px-3 sm:px-4 py-1 sm:py-2 rounded-md text-xs sm:text-base font-semibold ${
+                  isPlayerTurn && (currentBet <= playerBet)
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-gray-600 text-gray-300 cursor-not-allowed'
+                }`}
+              >
+                Check
+              </button>
+              <button
+                onClick={() => onPlayerAction && onPlayerAction('call')}
+                disabled={!isPlayerTurn || (currentBet <= playerBet)}
+                className={`px-3 sm:px-4 py-1 sm:py-2 rounded-md text-xs sm:text-base font-semibold ${
+                  isPlayerTurn && (currentBet > playerBet)
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-gray-600 text-gray-300 cursor-not-allowed'
+                }`}
+              >
+                Call ${currentBet - playerBet}
+              </button>
+            </div>
+            
+            {/* Raise controls */}
+            <div className="flex items-center gap-1 sm:gap-2">
               <input
                 type="number"
-                className="w-24 px-3 py-3 rounded-lg border-2 border-gray-600 bg-gray-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                placeholder="Amount"
-                min={currentBet * 2}
+                min={sanitizedTable.minRaise}
                 max={currentPlayer.chips}
-                disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2 || !isPlayerTurn}
-                title={!isPlayerTurn ? "Wait for your turn" : currentPlayer.chips < currentBet * 2 ? "Not enough chips to raise" : ""}
+                value={raiseAmount}
+                onChange={(e) => setRaiseAmount(Math.max(sanitizedTable.minRaise, Math.min(currentPlayer.chips, parseInt(e.target.value) || 0)))}
+                disabled={!isPlayerTurn}
+                className="w-16 sm:w-24 px-2 py-1 sm:py-2 rounded-md text-xs sm:text-base bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Amount"
               />
               <button
-                className="px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                onClick={() => {
-                  const input = document.querySelector('input[type="number"]') as HTMLInputElement;
-                  const amount = parseInt(input.value);
-                  if (amount && amount >= currentBet * 2) {
-                    onPlayerAction?.('raise', amount);
-                  }
-                }}
-                disabled={!onPlayerAction || currentPlayer.chips < currentBet * 2 || !isPlayerTurn}
-                title={!isPlayerTurn ? "Wait for your turn" : currentPlayer.chips < currentBet * 2 ? "Not enough chips to raise" : ""}
+                onClick={() => onPlayerAction && onPlayerAction('raise', raiseAmount)}
+                disabled={!isPlayerTurn || raiseAmount < sanitizedTable.minRaise}
+                className={`px-3 sm:px-4 py-1 sm:py-2 rounded-md text-xs sm:text-base font-semibold ${
+                  isPlayerTurn && raiseAmount >= sanitizedTable.minRaise
+                    ? 'bg-yellow-500 hover:bg-yellow-600 text-gray-900'
+                    : 'bg-gray-600 text-gray-300 cursor-not-allowed'
+                }`}
               >
                 Raise
               </button>
             </div>
+            
+            {/* Turn timer */}
+            {isPlayerTurn && (
+              <div className="ml-1 sm:ml-2">
+                <TurnTimer
+                  table={sanitizedTable}
+                  isCurrentPlayer={true}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}

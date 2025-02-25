@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, User, updateProfile } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 
 const firebaseConfig = {
@@ -25,10 +25,17 @@ export type AuthError = {
 
 export const signUpWithEmail = async (
   email: string,
-  password: string
+  password: string,
+  username: string
 ): Promise<{ user: User } | { error: AuthError }> => {
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    
+    // Update the user's display name with the provided username
+    await updateProfile(userCredential.user, {
+      displayName: username
+    });
+    
     return { user: userCredential.user };
   } catch (error) {
     return { error: error as AuthError };
