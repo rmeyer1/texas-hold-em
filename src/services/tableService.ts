@@ -102,7 +102,7 @@ export class TableService {
     return connectionManager.registerConnection(refPath, handleSnapshot);
   }
 
-  public async addPlayer(player: Omit<Player, 'holeCards' | 'isActive' | 'hasFolded'>): Promise<void> {
+  public async addPlayer(player: Omit<Player, 'cards' | 'isActive' | 'hasFolded'>): Promise<void> {
     const table = await this.ensureTableExists();
     
     // Ensure players array exists
@@ -114,7 +114,7 @@ export class TableService {
 
     const newPlayer: Player = {
       ...player,
-      holeCards: [],
+      cards: [],
       isActive: true,
       hasFolded: false,
     };
