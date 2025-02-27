@@ -30,7 +30,15 @@ export class TableService {
         bettingRound: 'small_blind',
         roundBets: {},
         minRaise: 20,
-        turnTimeLimit: 45000
+        turnTimeLimit: 45000,
+        isHandInProgress: false,
+        activePlayerCount: 0,
+        lastAction: null,
+        lastActivePlayer: null,
+        lastBettor: null,
+        isPrivate: false,
+        password: null,
+        gameStarted: false
       };
       await set(this.tableRef, initialTable);
       return initialTable;
@@ -61,7 +69,15 @@ export class TableService {
       bettingRound: 'small_blind',
       roundBets: {},
       minRaise: 20,
-      turnTimeLimit: 45000
+      turnTimeLimit: 45000,
+      isHandInProgress: false,
+      activePlayerCount: 0,
+      lastAction: null,
+      lastActivePlayer: null,
+      lastBettor: null,
+      isPrivate: false,
+      password: null,
+      gameStarted: false
     };
 
     await set(this.tableRef, initialTable);
