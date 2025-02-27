@@ -33,8 +33,8 @@ describe('useTurnTimer', () => {
     bigBlind: 20,
     turnTimeLimit: 30000, // 30 seconds
     lastActionTimestamp: Date.now(),
-    phase: 'preflop' as 'preflop',
-    bettingRound: 'first_round' as 'first_round',
+    phase: 'preflop' as const,
+    bettingRound: 'first_round' as const,
     roundBets: {},
     minRaise: 20
   } as Table;

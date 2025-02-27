@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { connectionManager } from '@/services/connectionManager';
-import { getAuth } from 'firebase/auth';
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
@@ -28,16 +27,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     
     // Parse the request body to check for action type
     let action = 'clear';
-    let options = {};
+    let _options = {};
     try {
       const body = await request.json();
       if (body && body.action) {
         action = body.action;
       }
       if (body && body.options) {
-        options = body.options;
+        _options = body.options;
       }
-    } catch (error) {
+    } catch (_error) {
       // If no body or invalid JSON, default to 'clear' action
     }
     
