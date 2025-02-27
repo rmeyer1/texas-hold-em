@@ -1,7 +1,7 @@
 import { SignUpForm } from '@/components/auth/SignUpForm';
 import Link from 'next/link';
 
-export default function SignUpPage(): JSX.Element {
+export default function SignUpPage(): React.ReactElement {
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       <SignUpForm />

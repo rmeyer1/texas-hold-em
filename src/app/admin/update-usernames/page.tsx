@@ -5,7 +5,7 @@ import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { updateUserDisplayName } from '@/utils/updateUsernames';
 import { useRouter } from 'next/navigation';
 
-export default function UpdateUsernamesPage(): JSX.Element {
+export default function UpdateUsernamesPage(): React.ReactElement {
   const [username, setUsername] = useState('');
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);

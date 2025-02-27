@@ -5,7 +5,7 @@ import { signOutUser } from '@/services/firebase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-export default function SignOutPage(): JSX.Element {
+export default function SignOutPage(): React.ReactElement {
   const [message, setMessage] = useState('Signing out...');
   const router = useRouter();
 
