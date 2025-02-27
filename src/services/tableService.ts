@@ -1,6 +1,7 @@
 import { ref, set, update, onValue, off, get, type DataSnapshot } from 'firebase/database';
 import { database } from './firebase';
 import type { Table, Player } from '@/types/poker';
+import { connectionManager } from './connectionManager';
 
 export class TableService {
   private tableRef;
@@ -79,8 +80,10 @@ export class TableService {
       }
     };
 
-    onValue(this.tableRef, handleSnapshot);
-    return () => off(this.tableRef);
+    // Use the connection manager to register this connection
+    const tableId = this.tableRef.key;
+    const refPath = `tables/${tableId}`;
+    return connectionManager.registerConnection(refPath, handleSnapshot);
   }
 
   public async addPlayer(player: Omit<Player, 'holeCards' | 'isActive' | 'hasFolded'>): Promise<void> {

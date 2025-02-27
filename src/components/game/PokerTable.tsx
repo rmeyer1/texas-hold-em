@@ -5,6 +5,8 @@ import { CommunityCards } from './CommunityCards';
 import { TurnTimer } from '../TurnTimer';
 import { getDatabase, ref, update, get } from 'firebase/database';
 import { useAuth } from '@/contexts/AuthContext';
+import logger from '@/utils/logger';
+import { serializeError } from '@/utils/errorUtils';
 
 interface PokerTableProps {
   table: Partial<Table>;
@@ -67,7 +69,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({
         if (playerIndex !== -1) {
           // Check if the name needs to be updated
           if (tableData.players[playerIndex].name !== user.displayName) {
-            console.log(`Auto-refreshing player name to "${user.displayName}" in table ${table.id}`);
+            logger.log(`Auto-refreshing player name to "${user.displayName}" in table ${table.id}`);
             
             // Create an update object with the path as key and new name as value
             const updates: Record<string, string> = {};
@@ -75,11 +77,14 @@ export const PokerTable: React.FC<PokerTableProps> = ({
             updates[`${tablePath}/players/${playerIndex}/name`] = user.displayName || 'Player';
             
             await update(ref(database), updates);
-            console.log(`Successfully refreshed player name in table ${table.id}`);
+            logger.log(`Successfully refreshed player name in table ${table.id}`);
           }
         }
       } catch (error) {
-        console.error(`Error refreshing player name in table ${table.id}:`, error);
+        logger.error(`Error refreshing player name in table ${table.id}:`, {
+          error: serializeError(error),
+          timestamp: new Date().toISOString()
+        });
       }
     };
 
@@ -137,8 +142,10 @@ export const PokerTable: React.FC<PokerTableProps> = ({
       activePlayerCount: table.activePlayerCount || table.players!.filter(p => p.isActive).length,
       lastAction: table.lastAction || null,
       lastActivePlayer: table.lastActivePlayer || null,
+      lastBettor: table.lastBettor || null,
       isPrivate: table.isPrivate || false,
       password: table.password || null,
+      handId: table.handId || '',
     };
 
     // Non-critical validation - these will generate warnings
@@ -178,7 +185,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({
         stack: new Error().stack?.split('\n').slice(0, 3).join('\n')
       };
 
-      console.warn('Table state warnings:', JSON.stringify(warningData, null, 2));
+      logger.warn('Table state warnings:', warningData);
     }
 
     return { 
@@ -238,7 +245,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({
     
   // Debug log for player turn
   if (currentPlayerId) {
-    console.log('[PokerTable] Player turn check:', {
+    logger.log('[PokerTable] Player turn check:', {
       isPlayerTurn,
       currentPlayerId,
       activePlayerIndex,

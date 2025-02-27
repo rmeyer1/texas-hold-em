@@ -10,6 +10,9 @@ export const Nav = (): React.ReactElement => {
   const { user } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
+  // Check if user is an admin
+  const isAdmin = user?.email === process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+  
   const toggleMenu = (): void => {
     setIsMenuOpen(!isMenuOpen);
   };
@@ -28,6 +31,16 @@ export const Nav = (): React.ReactElement => {
               <span className="text-gray-300">
                 {user.displayName || 'Player'}
               </span>
+              {isAdmin && (
+                <Link
+                  href="/admin"
+                  className={`hover:text-gray-300 transition-colors ${
+                    pathname.startsWith('/admin') ? 'text-blue-400' : ''
+                  }`}
+                >
+                  Admin
+                </Link>
+              )}
               <Link
                 href="/auth/signout"
                 className={`hover:text-gray-300 transition-colors ${
@@ -69,6 +82,17 @@ export const Nav = (): React.ReactElement => {
               <span className="text-gray-300 py-2 border-b border-gray-700">
                 {user.displayName || 'Player'}
               </span>
+              {isAdmin && (
+                <Link
+                  href="/admin"
+                  className={`py-2 ${
+                    pathname.startsWith('/admin') ? 'text-blue-400' : 'text-white'
+                  }`}
+                  onClick={toggleMenu}
+                >
+                  Admin Dashboard
+                </Link>
+              )}
               <Link
                 href="/admin/update-usernames"
                 className={`py-2 ${

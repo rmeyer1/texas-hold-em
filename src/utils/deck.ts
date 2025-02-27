@@ -1,4 +1,5 @@
 import { Card, Suit, Rank } from '../types/poker';
+import logger from '@/utils/logger';
 
 const SUITS: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
 const RANKS: Rank[] = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
@@ -32,7 +33,7 @@ export class Deck {
   public dealCard(): Card | undefined {
     // If deck is empty, reset it
     if (this.cards.length === 0) {
-      console.warn('[Deck] Deck is empty, resetting');
+      logger.warn('[Deck] Deck is empty, resetting');
       this.reset();
     }
     return this.cards.pop();
@@ -41,7 +42,7 @@ export class Deck {
   public dealHoleCards(): [Card, Card] | undefined {
     // If deck doesn't have enough cards, reset it
     if (this.cards.length < 2) {
-      console.warn('[Deck] Not enough cards for hole cards, resetting deck');
+      logger.warn('[Deck] Not enough cards for hole cards, resetting deck');
       this.reset();
     }
     
@@ -49,7 +50,7 @@ export class Deck {
     const card2 = this.dealCard();
     
     if (!card1 || !card2) {
-      console.error('[Deck] Failed to deal hole cards even after reset');
+      logger.error('[Deck] Failed to deal hole cards even after reset');
       return undefined;
     }
 
@@ -59,7 +60,7 @@ export class Deck {
   public dealFlop(): [Card, Card, Card] | undefined {
     // If deck doesn't have enough cards, reset it
     if (this.cards.length < 3) {
-      console.warn('[Deck] Not enough cards for flop, resetting deck');
+      logger.warn('[Deck] Not enough cards for flop, resetting deck');
       this.reset();
     }
     
@@ -68,7 +69,7 @@ export class Deck {
     const card3 = this.dealCard();
 
     if (!card1 || !card2 || !card3) {
-      console.error('[Deck] Failed to deal flop even after reset');
+      logger.error('[Deck] Failed to deal flop even after reset');
       return undefined;
     }
 

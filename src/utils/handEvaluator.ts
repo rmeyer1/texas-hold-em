@@ -1,4 +1,6 @@
 import { Card, Hand, HandRank } from '../types/poker';
+import logger from '@/utils/logger';
+import { serializeError } from '@/utils/errorUtils';
 
 // Helper function to convert rank to numeric value for comparison
 const getRankValue = (rank: string): number => {
@@ -203,9 +205,9 @@ export const evaluateHand = (cards: Card[]): Hand => {
 export const findBestHand = (holeCards: Card[], communityCards: Card[]): Hand => {
   // Ensure communityCards is initialized
   if (!communityCards || !Array.isArray(communityCards)) {
-    console.error('[HandEvaluator] Community cards not properly initialized:', {
+    logger.error('[HandEvaluator] Community cards not properly initialized:', {
       timestamp: new Date().toISOString(),
-      communityCards,
+      communityCards: serializeError(communityCards),
     });
     communityCards = [];
   }

@@ -38,7 +38,10 @@ export interface Player {
   position: number;
   isActive: boolean;
   hasFolded: boolean;
+  cards?: Card[]; // Optional: for in-memory use, aligns with startNewHand
 }
+
+export type PlayerAction = 'fold' | 'check' | 'call' | 'raise'; // New: for handlePlayerAction
 
 export interface Table {
   id: string;
@@ -61,8 +64,13 @@ export interface Table {
   activePlayerCount: number;
   lastAction: string | null;
   lastActivePlayer: string | null;
+  lastBettor: string | null; // ID of the last player who bet or raised in the current phase
   gameStarted?: boolean; // Tracks whether the game has been manually started
   isPrivate: boolean; // Whether the table requires a password to join
   password: string | null; // Password required to join if isPrivate is true
   maxPlayers?: number; // Maximum number of players allowed at the table
+  winners?: string[] | null; // New: for endRound
+  winningAmount?: number | null; // New: for endRound
+  nextHandScheduled?: boolean; // Flag to track if a new hand is scheduled to start
+  handId?: string; // Unique identifier for each hand to track hand changes
 } 

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { ref, onValue } from 'firebase/database';
 import { database } from '@/services/firebase';
+import { connectionManager } from '@/services/connectionManager';
 import { LobbyTable } from './LobbyTable';
 import { useAuth } from '@/contexts/AuthContext';
 import { GameManager } from '@/services/gameManager';
@@ -50,10 +51,13 @@ export const LobbyView = (): React.ReactElement => {
     isPrivate: false,
     password: '',
   });
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const tablesRef = ref(database, 'tables');
-    const unsubscribe = onValue(tablesRef, (snapshot) => {
+    
+    // Use the connection manager to register this connection
+    const unsubscribe = connectionManager.registerConnection('tables', (snapshot) => {
       if (snapshot.exists()) {
         const tablesData = snapshot.val();
         const tablesArray = Object.entries(tablesData).map(([id, data]) => {
@@ -73,6 +77,7 @@ export const LobbyView = (): React.ReactElement => {
       } else {
         setTables([]);
       }
+      setIsLoading(false);
     });
 
     return () => {
@@ -124,8 +129,10 @@ export const LobbyView = (): React.ReactElement => {
 
     if (validateForm()) {
       try {
-        const gameManager = new GameManager('temp'); // Temporary ID, will be replaced by createTable
-        const tableId = await gameManager.createTable(
+        // Generate a unique ID for the table using a combination of timestamp and random string
+        const uniqueId = `table-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+        const gameManager = new GameManager(uniqueId);
+        await gameManager.createTable(
           formData.name,
           formData.smallBlind,
           formData.bigBlind,
@@ -144,7 +151,8 @@ export const LobbyView = (): React.ReactElement => {
           password: '',
         });
         
-        router.push(`/table/${tableId}`);
+        // Use the uniqueId directly for navigation
+        router.push(`/table/${uniqueId}`);
       } catch (error) {
         console.error('Failed to create table:', error);
         alert('Failed to create table');

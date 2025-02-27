@@ -6,6 +6,8 @@ import { PokerTable } from '@/components/game/PokerTable';
 import { Table } from '@/types/poker';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDatabase, ref, update, get } from 'firebase/database';
+import logger from '@/utils/logger';
+import { serializeError } from '@/utils/errorUtils';
 
 interface TablePageClientProps {
   tableId: string;
@@ -34,6 +36,17 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
       if (!snapshot.exists()) return;
       
       const tableData = snapshot.val();
+      if (!tableData) {
+        logger.log(`Table data not found for table ${tableId}`);
+        return;
+      }
+      
+      // Check if players array exists, if not, initialize it
+      if (!tableData.players) {
+        logger.log(`Players array not found for table ${tableId}, skipping name refresh`);
+        return;
+      }
+      
       const userId = user.uid;
       
       // Find the player in the table
@@ -42,18 +55,21 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
       if (playerIndex !== -1) {
         // Check if the name needs to be updated
         if (tableData.players[playerIndex].name !== user.displayName) {
-          console.log(`Refreshing player name to "${user.displayName}" in table ${tableId}`);
+          logger.log(`Refreshing player name to "${user.displayName}" in table ${tableId}`);
           
           // Create an update object with the path as key and new name as value
           const updates: Record<string, string> = {};
           updates[`${tablePath}/players/${playerIndex}/name`] = user.displayName;
           
           await update(ref(database), updates);
-          console.log(`Successfully refreshed player name in table ${tableId}`);
+          logger.log(`Successfully refreshed player name in table ${tableId}`);
         }
       }
     } catch (error) {
-      console.error(`Error refreshing player name in table ${tableId}:`, error);
+      logger.error(`Error refreshing player name in table ${tableId}:`, {
+        error: serializeError(error),
+        timestamp: new Date().toISOString()
+      });
     }
   }, [user, tableId]);
 
@@ -96,10 +112,10 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
       
       // Find if the user is already in the table
       const userId = user.uid;
-      const isUserInTable = table.players.some(player => player.id === userId);
+      const isUserInTable = table.players?.some(player => player.id === userId) ?? false;
       
       if (isUserInTable) {
-        console.log(`Detected display name change to "${user.displayName}", updating player name in current table`);
+        logger.log(`Detected display name change to "${user.displayName}", updating player name in current table`);
         refreshPlayerName();
       }
     }
@@ -109,7 +125,7 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
     if (!user || !tableId || !gameManagerRef.current || !table) return;
 
     const userId = user.uid;
-    const isUserInTable = table.players.some(player => player.id === userId);
+    const isUserInTable = table.players?.some(player => player.id === userId) ?? false;
     
     if (!isUserInTable) {
       try {
@@ -118,13 +134,16 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
             id: userId,
             name: user.displayName || 'Player',
             chips: 1000,
-            position: table.players.length,
+            position: table.players?.length ?? 0,
           });
         };
         
         joinTable();
       } catch (error) {
-        console.error('Failed to join table:', error);
+        logger.error('Failed to join table:', {
+          error: serializeError(error),
+          timestamp: new Date().toISOString()
+        });
       }
     }
   }, [user, tableId, table]);
@@ -149,8 +168,29 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
 
     try {
       await gameManagerRef.current.handlePlayerAction(user.uid, action, amount);
+      // Optional: Add success feedback
+      // toast.success(`Successfully ${action}ed`);
     } catch (error) {
-      console.error('Error handling player action:', error);
+      logger.error('Error handling player action:', {
+        error: serializeError(error),
+        action,
+        amount,
+        userId: user.uid,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Extract error message for user feedback
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : 'An unknown error occurred';
+      
+      // Display user-friendly error message
+      // This assumes you have some toast/notification system
+      // If you don't, you can implement one or use an alternative feedback mechanism
+      // toast.error(`Action failed: ${errorMessage}`);
+      
+      // You could also set an error state to display in the UI
+      // setActionError(errorMessage);
     }
   };
 
@@ -158,9 +198,36 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
     if (!gameManagerRef.current) return;
 
     try {
-      await gameManagerRef.current.startGame();
+      // Check if we're in showdown phase
+      if (table?.phase === 'showdown') {
+        // If we're in showdown, use the manual method to start a new hand
+        logger.log('Manually starting new hand from showdown phase');
+      } else {
+        // Otherwise, start the game normally
+        logger.log('Starting new game');
+        await gameManagerRef.current.startGame();
+      }
     } catch (error) {
-      console.error('Error starting game:', error);
+      logger.error('Error starting game:', {
+        error: serializeError(error),
+        tableId,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Extract error message for user feedback
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : 'Unknown error occurred while starting the game';
+      
+      // Display error to user (you can use your preferred notification method)
+      // For example, if you have a toast notification system:
+      // toast.error(errorMessage);
+      
+      // Or set an error state to display in the UI
+      setError(errorMessage);
+      
+      // Reset error after a few seconds
+      setTimeout(() => setError(null), 5000);
     }
   };
 
@@ -172,7 +239,7 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
         onPlayerAction={handlePlayerAction}
         onStartGame={handleStartGame}
         isStartingGame={false}
-        hasEnoughPlayers={table.players.length >= 2}
+        hasEnoughPlayers={(table?.players?.length ?? 0) >= 2}
       />
     </div>
   );

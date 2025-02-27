@@ -13,10 +13,17 @@ async function TableLoader({ tableId }: { tableId: string }) {
   console.log('[TableLoader] Starting to load table:', {
     tableId,
     timestamp: new Date().toISOString(),
-    stack: new Error().stack
   });
 
   try {
+    if (!tableId || typeof tableId !== 'string' || !/^[a-zA-Z0-9-]+$/.test(tableId)) {
+      console.error('[TableLoader] Invalid table ID format:', {
+        tableId,
+        timestamp: new Date().toISOString(),
+      });
+      notFound();
+    }
+    
     // Pre-fetch table data on the server
     const tableData = await GameManager.getTableData(tableId);
     
