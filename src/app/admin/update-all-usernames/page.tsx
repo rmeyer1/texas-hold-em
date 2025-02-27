@@ -5,7 +5,7 @@ import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-export default function UpdateAllUsernamesPage(): JSX.Element {
+export default function UpdateAllUsernamesPage(): React.ReactElement {
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
