@@ -129,63 +129,35 @@ export class PlayerManager {
   haveAllPlayersActed(table: Table): boolean {
     const { players, currentPlayerIndex, currentBet } = table;
     
-    // Ensure roundBets is initialized
-    if (!table.roundBets) {
-      table.roundBets = {};
-    }
+    if (!table.roundBets) table.roundBets = {};
     
-    // If there's no bet, we need to check if we've gone full circle
+    const activePlayers = this.getActivePlayers(table);
+    if (activePlayers.length <= 1) return true;
+  
+    // Check if all active players have matched the current bet
+    const allBetsMatch = activePlayers.every(p => (table.roundBets[p.id] || 0) === table.currentBet);
+    if (!allBetsMatch) return false;
+  
+    // If no bet this round (e.g., all checks), cycle back to first player
     if (currentBet === 0) {
-      // Get the first player to act in this phase (typically the player after the dealer)
-      // This is an approximation - ideally we'd track the first player who acted in this phase
       const firstToActIndex = (table.dealerPosition + 1) % players.length;
-      
-      // If we've returned to the first player to act, everyone has checked
-      // This assumes the currentPlayerIndex has already been updated to the next player
-      const nextPlayerIndex = (currentPlayerIndex + 1) % players.length;
+      const nextPlayerIndex = this.getNextActivePlayerIndex(table, currentPlayerIndex);
       return nextPlayerIndex === firstToActIndex;
     }
-    
-    // If there's been a bet/raise, we need to make sure everyone has responded to it
+  
+    // If there's a lastBettor (e.g., from a raise), ensure we've cycled back to them
     if (table.lastBettor) {
-      // Find the index of the last bettor
       const lastBettorIndex = players.findIndex(p => p.id === table.lastBettor);
       if (lastBettorIndex === -1) {
         logger.warn('[PlayerManager] Last bettor not found in players array');
-        return false; // Safety check
+        return false;
       }
-      
-      // We need to check if all players have had a chance to act after the last bet/raise
-      // The betting round is complete when we've gone full circle and are about to act on the player AFTER the last bettor
-      // This means the current player should be the player before the last bettor
-      const playerBeforeLastBettor = (lastBettorIndex - 1 + players.length) % players.length;
-      return currentPlayerIndex === playerBeforeLastBettor;
+      // Check if the next player would be the last bettor, indicating full cycle
+      const nextPlayerIndex = this.getNextActivePlayerIndex(table, currentPlayerIndex);
+      return nextPlayerIndex === lastBettorIndex;
     }
-    
-    // If we get here with a currentBet > 0 but no lastBettor, something is wrong
-    // This is a fallback to the original logic
-    const roundBets = table.roundBets;
-    
-    // Start from the player after the current one and go around the table
-    let idx = (currentPlayerIndex + 1) % players.length;
-    const startIdx = idx;
-    
-    do {
-      const player = players[idx];
-      
-      // Skip inactive, folded, or all-in players
-      if (player.isActive && !player.hasFolded && player.chips > 0) {
-        const playerBet = roundBets[player.id] || 0;
-        
-        // If a player hasn't matched the current bet and has chips, they haven't acted
-        if (playerBet < currentBet) {
-          return false;
-        }
-      }
-      
-      idx = (idx + 1) % players.length;
-    } while (idx !== startIdx);
-    
+  
+    // Fallback: all bets match, and no further action needed
     return true;
   }
 
