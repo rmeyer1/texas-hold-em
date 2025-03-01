@@ -113,13 +113,58 @@ export class PhaseManager {
    * Check if the current phase is complete and should move to the next phase
    */
   shouldAdvancePhase(table: Table): boolean {
-    // If only one active player remains, move to showdown
-    if (this.playerManager.getActiveCount(table) <= 1) {
-      return true;
+    try {
+      // Log detailed table state
+      logger.log('[PhaseManager] shouldAdvancePhase detailed state:', { 
+        phase: table.phase,
+        currentPlayerIndex: table.currentPlayerIndex,
+        dealerPosition: table.dealerPosition,
+        lastAction: table.lastAction,
+        lastActivePlayer: table.lastActivePlayer,
+        lastBettor: table.lastBettor,
+        currentBet: table.currentBet,
+        pot: table.pot,
+        activePlayerCount: this.playerManager.getActiveCount(table),
+        players: table.players.map(p => ({
+          id: p.id,
+          position: p.position,
+          isActive: p.isActive,
+          hasFolded: p.hasFolded,
+          chips: p.chips,
+          bet: table.roundBets?.[p.id] || 0
+        })),
+        roundBets: table.roundBets || {}
+      });
+
+      // If only one active player remains, move to showdown
+      const activeCount = this.playerManager.getActiveCount(table);
+      const haveAllActed = this.playerManager.haveAllPlayersActed(table);
+      
+      logger.log('[PhaseManager] shouldAdvancePhase checking:', { 
+        activeCount, 
+        haveAllActed,
+        currentPlayerIndex: table.currentPlayerIndex,
+        lastAction: table.lastAction
+      });
+      
+      if (activeCount <= 1) {
+        logger.log('[PhaseManager] shouldAdvancePhase: Only one active player left, advancing phase');
+        return true;
+      }
+      
+      // Check if all players have acted and bets are equal
+      const result = haveAllActed;
+      logger.log('[PhaseManager] shouldAdvancePhase result:', { result });
+      return result;
+    } catch (error) {
+      // If an error occurs, log it but don't advance the phase
+      logger.error('[PhaseManager] Error in shouldAdvancePhase:', { 
+        error: typeof error === 'object' ? JSON.stringify(error) : String(error),
+        stack: error instanceof Error ? error.stack : 'No stack trace'
+      });
+      console.error('[PhaseManager] Error in shouldAdvancePhase:', error);
+      return false;
     }
-    
-    // Check if all players have acted and bets are equal
-    return this.playerManager.haveAllPlayersActed(table);
   }
 
   /**

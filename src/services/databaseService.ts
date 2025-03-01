@@ -1,4 +1,4 @@
-import { ref, set, update, get, onValue, off, DatabaseReference } from 'firebase/database';
+import { ref, set, update, get, DatabaseReference, runTransaction, off, onValue } from 'firebase/database'; // Add runTransaction to imports
 import { database } from './firebase';
 import { getAuth } from 'firebase/auth';
 import type { Table, Card, Player, PrivatePlayerData } from '@/types/poker';
@@ -14,6 +14,8 @@ interface ExtendedPrivatePlayerData extends PrivatePlayerData {
 export class DatabaseService {
   private db = database;
   private tableId: string;
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private pendingUpdates: Partial<Table> = {};
 
   constructor(tableId: string) {
     this.tableId = tableId;
@@ -86,20 +88,29 @@ export class DatabaseService {
    * Update the table with partial data
    */
   async updateTable(updates: Partial<Table>): Promise<void> {
-    try {
-      // Sanitize the updates to remove any undefined values
-      const sanitizedUpdates = this.sanitizeData(updates);
-      
-      await update(this.getTableRef(), sanitizedUpdates);
-    } catch (error) {
-      console.error('[DatabaseService] Error updating table:', {
-        tableId: this.tableId,
-        updates,
-        error: serializeError(error),
-        timestamp: new Date().toISOString(),
-      });
-      throw error;
-    }
+    Object.assign(this.pendingUpdates, this.sanitizeData(updates));
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+
+    return new Promise((resolve, reject) => {
+      this.debounceTimer = setTimeout(async () => {
+        try {
+          await update(this.getTableRef(), this.pendingUpdates);
+          this.pendingUpdates = {};
+          this.debounceTimer = null;
+          resolve();
+        } catch (error) {
+          logger.error('[DatabaseService] Debounced update failed:', { error: serializeError(error) });
+          reject(error);
+        }
+      }, 100); // 100ms debounce
+    });
+  }
+  async forceUpdateTable(updates: Partial<Table>): Promise<void> {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    Object.assign(this.pendingUpdates, this.sanitizeData(updates));
+    await update(this.getTableRef(), this.pendingUpdates);
+    this.pendingUpdates = {};
+    this.debounceTimer = null;
   }
 
   /**
@@ -209,15 +220,21 @@ export class DatabaseService {
    */
   subscribeToTable(callback: (table: Table) => void): () => void {
     const tableRef = this.getTableRef();
-    const refPath = `tables/${this.tableId}`;
-    
-    // Use the connection manager to register this connection
-    return connectionManager.registerConnection(refPath, (snapshot) => {
+    console.log('[DatabaseService] Subscribing to:', tableRef.toString());
+    const handler = onValue(tableRef, (snapshot) => {
       const table = snapshot.val();
       if (table) {
+        console.log('[DatabaseService] Subscription fired:', { 
+          currentPlayerIndex: table.currentPlayerIndex,
+          lastAction: table.lastAction
+        });
         callback(table);
       }
     });
+    return () => {
+      console.log('[DatabaseService] Unsubscribing from:', tableRef.toString());
+      off(tableRef, 'value', handler);
+    };
   }
 
   /**
@@ -357,6 +374,25 @@ export class DatabaseService {
     } catch (error) {
       console.error('[DatabaseService] Error getting table data:', {
         tableId,
+        error: serializeError(error),
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
+    }
+  }
+  async updateTableTransaction(updateFn: (current: Table) => Table): Promise<void> {
+    const tableRef = this.getTableRef();
+    try {
+      logger.log('[DatabaseService] updateTableTransaction starting:', { tableId: this.tableId });
+      await runTransaction(tableRef, (current) => {
+        if (!current) return null; // Abort if no data exists
+        logger.log('[DatabaseService] updateTableTransaction transaction:', { current });
+        return updateFn(current as Table); // Cast current to Table and apply update
+      });
+      logger.log('[DatabaseService] updateTableTransaction completed:', { tableId: this.tableId });
+    } catch (error) {
+      logger.error('[DatabaseService] Transaction failed:', { 
+        tableId: this.tableId,
         error: serializeError(error),
         timestamp: new Date().toISOString(),
       });

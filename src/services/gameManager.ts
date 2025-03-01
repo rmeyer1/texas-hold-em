@@ -15,6 +15,8 @@ export class GameManager {
   private phases: PhaseManager;
   private handEvaluator: HandEvaluator;
   private tableId: string;
+  private pendingUpdates: Partial<Table> = {};
+  private isBatching: boolean = false;
   private tableStateCallback?: (table: Table) => void;
   private static readonly TURN_TIME_LIMIT = 45000; // 45 seconds in milliseconds
   private static readonly DEFAULT_SMALL_BLIND = 10;
@@ -28,7 +30,20 @@ export class GameManager {
     this.phases = new PhaseManager(tableId);
     this.handEvaluator = new HandEvaluator(tableId);
   }
-
+  private startBatch(): void {
+    this.isBatching = true;
+    this.pendingUpdates = {};
+  }
+  private queueUpdate(updates: Partial<Table>): void {
+    Object.assign(this.pendingUpdates, updates);
+  }
+  private async commitBatch(table: Table): Promise<void> {
+    if (this.isBatching && Object.keys(this.pendingUpdates).length > 0) {
+      Object.assign(table, this.pendingUpdates);
+      await this.db.forceUpdateTable(table);      this.pendingUpdates = {};
+      this.isBatching = false;
+    }
+  }
   /**
    * Initialize the game manager
    */
@@ -73,29 +88,17 @@ export class GameManager {
   /**
    * Handle a player action (fold, check, call, raise)
    */
-  public async handlePlayerAction(
-    playerId: string,
-    action: PlayerAction,
-    amount?: number
-  ): Promise<void> {
+  public async handlePlayerAction(playerId: string, action: PlayerAction, amount?: number): Promise<void> {
+    console.log('[GameManager] handlePlayerAction called:', { playerId, action, amount });
     try {
       const table = await this.db.getTable();
-      if (!table) {
-        throw new Error('Table not found');
-      }
-
-      // Validate that it's the player's turn
-      const currentPlayer = table.players[table.currentPlayerIndex];
-      if (currentPlayer.id !== playerId) {
-        throw new Error(`Not ${playerId}'s turn to act`);
-      }
-
-      // Ensure roundBets is initialized
-      if (!table.roundBets) {
-        table.roundBets = {};
-      }
-
-      // Handle the action
+      if (!table) throw new Error('Table not found');
+  
+      if (!table.roundBets) table.roundBets = {};
+  
+      // Ensure amount is not undefined for any action
+      const validAmount = action === 'check' ? 0 : amount;
+  
       switch (action) {
         case 'fold':
           await this.handleFold(table, playerId);
@@ -107,23 +110,31 @@ export class GameManager {
           await this.handleCall(table, playerId);
           break;
         case 'raise':
-          if (amount === undefined) {
-            throw new Error('Raise amount is required');
-          }
-          await this.handleRaise(table, playerId, amount);
+          if (validAmount === undefined) throw new Error('Raise amount is required');
+          await this.handleRaise(table, playerId, validAmount);
           break;
         default:
           throw new Error(`Unknown action: ${action}`);
       }
     } catch (error) {
+      const serializedError = serializeError(error);
+      console.error('[GameManager] Error in handlePlayerAction:', { 
+        playerId, 
+        action, 
+        amount, 
+        errorMessage: serializedError.message,
+        errorStack: serializedError.stack 
+      });
       logger.error('[GameManager] Error handling player action:', {
         tableId: this.tableId,
         playerId,
         action,
         amount,
-        error: serializeError(error),
+        errorMessage: serializedError.message,
+        errorStack: serializedError.stack,
         timestamp: new Date().toISOString(),
       });
+      console.error('Error handling player action:', error); // Log the raw error directly
       throw error;
     }
   }
@@ -131,154 +142,226 @@ export class GameManager {
   /**
    * Handle a fold action
    */
-  private async handleFold(table: Table, playerId: string): Promise<void> {
+/**
+ * Handle a fold action
+ */
+private async handleFold(table: Table, playerId: string): Promise<void> {
+  await this.db.updateTableTransaction((currentTable) => {
     // Ensure roundBets is initialized
-    if (!table.roundBets) {
-      table.roundBets = {};
+    if (!currentTable.roundBets) {
+      currentTable.roundBets = {};
     }
     
     // Mark player as folded
-    this.players.fold(table, playerId);
+    const player = currentTable.players.find(p => p.id === playerId);
+    if (player) {
+      player.hasFolded = true;
+    } else {
+      throw new Error('Player not found');
+    }
     
     // Update last action
-    table.lastAction = 'fold';
-    table.lastActivePlayer = playerId;
+    currentTable.lastAction = 'fold';
+    currentTable.lastActivePlayer = playerId;
     
-    // Move to the next player or phase
-    await this.moveToNextPlayer(table);
-  }
+    return currentTable;
+  });
 
+  // Move to the next player or phase with the updated table
+  const updatedTable = await this.db.getTable();
+  if (!updatedTable) throw new Error('Table not found after transaction');
+  await this.moveToNextPlayer(updatedTable);
+}
   /**
    * Handle a check action
    */
+  /**
+ * Handle a check action
+ */
   private async handleCheck(table: Table, playerId: string): Promise<void> {
-    // Ensure roundBets is initialized
-    if (!table.roundBets) {
-      table.roundBets = {};
-    }
-    
-    // Validate that player can check
-    if (table.currentBet > 0 && (table.roundBets[playerId] || 0) < table.currentBet) {
-      throw new Error('Cannot check when there is an active bet');
-    }
-    
-    // Note: We don't change lastBettor here since a check doesn't change who the last bettor was
-    
-    // Update last action
-    table.lastAction = 'check';
-    table.lastActivePlayer = playerId;
-    
-    // Move to the next player or phase
-    await this.moveToNextPlayer(table);
+    logger.log('[GameManager] handleCheck starting:', { playerId });
+    const currentPlayer = table.players[table.currentPlayerIndex];
+    if (currentPlayer.id !== playerId) throw new Error(`Not ${playerId}'s turn to act`);
+  
+    await this.db.updateTableTransaction((currentTable) => {
+      logger.log('[GameManager] Inside handleCheck transaction:', { playerId, currentBet: currentTable.currentBet });
+      if (!currentTable.roundBets) currentTable.roundBets = {};
+      if (currentTable.currentBet > 0 && (currentTable.roundBets[playerId] || 0) < currentTable.currentBet) {
+        throw new Error('Cannot check when there is an active bet');
+      }
+      
+      // Explicitly set the round bet to 0 for check actions
+      currentTable.roundBets[playerId] = currentTable.roundBets[playerId] || 0;
+      
+      currentTable.lastAction = 'check';
+      currentTable.lastActivePlayer = playerId;
+      return currentTable;
+    });
+  
+    logger.log('[GameManager] handleCheck transaction completed');
+    const updatedTable = await this.db.getTable();
+    if (!updatedTable) throw new Error('Table not found after transaction');
+    logger.log('[GameManager] handleCheck fetched updatedTable:', { currentPlayerIndex: updatedTable.currentPlayerIndex });
+    await this.moveToNextPlayer(updatedTable);
   }
 
   /**
    * Handle a call action
    */
-  private async handleCall(table: Table, playerId: string): Promise<void> {
-    const player = table.players.find(p => p.id === playerId);
+  /**
+ * Handle a call action
+ */
+private async handleCall(table: Table, playerId: string): Promise<void> {
+  logger.log('[GameManager] handleCall starting:', { playerId });
+    const currentPlayer = table.players[table.currentPlayerIndex];
+    if (currentPlayer.id !== playerId) throw new Error(`Not ${playerId}'s turn to act`);
+  
+  await this.db.updateTableTransaction((currentTable) => {
+    const player = currentTable.players.find(p => p.id === playerId);
     if (!player) {
       throw new Error('Player not found');
     }
     
     // Ensure roundBets is initialized
-    if (!table.roundBets) {
-      table.roundBets = {};
+    if (!currentTable.roundBets) {
+      currentTable.roundBets = {};
     }
     
-    const currentPlayerBet = table.roundBets[playerId] || 0;
-    const amountToCall = Math.min(table.currentBet - currentPlayerBet, player.chips);
+    const currentPlayerBet = currentTable.roundBets[playerId] || 0;
+    const amountToCall = Math.min(currentTable.currentBet - currentPlayerBet, player.chips);
     
     // Place the bet
     if (amountToCall > 0) {
-      const actualBet = this.players.placeBet(table, playerId, amountToCall);
-      table.pot += actualBet;
-      table.roundBets[playerId] = (table.roundBets[playerId] || 0) + actualBet;
+      player.chips -= amountToCall; // Directly modify player chips
+      currentTable.pot += amountToCall;
+      currentTable.roundBets[playerId] = (currentTable.roundBets[playerId] || 0) + amountToCall;
     }
     
-    // Note: We don't change lastBettor here since a call doesn't change who the last bettor was
+    // Update last action (no change to lastBettor since call doesn't affect it)
+    currentTable.lastAction = 'call';
+    currentTable.lastActivePlayer = playerId;
     
-    // Update last action
-    table.lastAction = 'call';
-    table.lastActivePlayer = playerId;
-    
-    // Move to the next player or phase
-    await this.moveToNextPlayer(table);
-  }
+    return currentTable;
+  });
+
+  // Move to the next player or phase with the updated table
+  const updatedTable = await this.db.getTable();
+  if (!updatedTable) throw new Error('Table not found after transaction');
+  await this.moveToNextPlayer(updatedTable);
+}
 
   /**
    * Handle a raise action
    */
   private async handleRaise(table: Table, playerId: string, raiseAmount: number): Promise<void> {
+    logger.log('[GameManager] handleRaise starting:', { playerId });
+    const currentPlayer = table.players[table.currentPlayerIndex];
+    if (currentPlayer.id !== playerId) throw new Error(`Not ${playerId}'s turn to act`);
+
     const player = table.players.find(p => p.id === playerId);
-    if (!player) {
-      throw new Error('Player not found');
-    }
+    if (!player || raiseAmount < table.minRaise || raiseAmount > player.chips) throw new Error('Invalid raise');
+  
+    await this.db.updateTableTransaction((currentTable) => {
+      logger.log('[GameManager] Inside handleRaise transaction:', { playerId, raiseAmount });
+      const txPlayer = currentTable.players.find(p => p.id === playerId);
+      if (!txPlayer) throw new Error('Player not found in transaction');
+  
+      // Ensure roundBets is always an object, even if undefined in the snapshot
+      if (!currentTable.roundBets || typeof currentTable.roundBets !== 'object') {
+        currentTable.roundBets = {};
+      }
+  
+      const currentPlayerBet = currentTable.roundBets[playerId] || 0;
+      const additionalBet = raiseAmount - currentPlayerBet;
+  
+      txPlayer.chips -= additionalBet;
+      currentTable.pot += additionalBet;
+      currentTable.roundBets[playerId] = raiseAmount;
+      currentTable.currentBet = raiseAmount;
+      currentTable.minRaise = raiseAmount * 2;
+      currentTable.lastBettor = playerId;
+      currentTable.lastAction = 'raise';
+      currentTable.lastActivePlayer = playerId;
+  
+      return currentTable;
+    });
     
-    // Validate raise amount
-    if (raiseAmount < table.minRaise) {
-      throw new Error(`Raise must be at least ${table.minRaise}`);
-    }
-    
-    if (raiseAmount > player.chips) {
-      throw new Error(`Cannot raise more than available chips (${player.chips})`);
-    }
-    
-    // Ensure roundBets is initialized
-    if (!table.roundBets) {
-      table.roundBets = {};
-    }
-    
-    const currentPlayerBet = table.roundBets[playerId] || 0;
-    const additionalBet = raiseAmount - currentPlayerBet;
-    
-    // Place the bet
-    const actualBet = this.players.placeBet(table, playerId, additionalBet);
-    table.pot += actualBet;
-    table.roundBets[playerId] = raiseAmount;
-    
-    // Update table state
-    table.currentBet = raiseAmount;
-    table.minRaise = raiseAmount * 2;
-    
-    // Set this player as the last bettor
-    table.lastBettor = playerId;
-    
-    // Update last action
-    table.lastAction = 'raise';
-    table.lastActivePlayer = playerId;
-    
-    // Move to the next player or phase
-    await this.moveToNextPlayer(table);
+    // Fetch the updated table state after the transaction
+    const updatedTable = await this.db.getTable();
+    if (!updatedTable) throw new Error('Table not found after transaction');
+
+    // Pass the updated table to moveToNextPlayer
+    await this.moveToNextPlayer(updatedTable);
   }
 
   /**
    * Move to the next player or phase
    */
   private async moveToNextPlayer(table: Table): Promise<void> {
-    // Ensure roundBets is initialized
-    if (!table.roundBets) {
-      table.roundBets = {};
+    try {
+      logger.log('[GameManager] moveToNextPlayer starting:', { currentPlayerIndex: table.currentPlayerIndex, phase: table.phase });
+      if (!table.roundBets) table.roundBets = {};
+    
+      if (this.players.getActiveCount(table) <= 1) {
+        logger.log('[GameManager] moveToNextPlayer: Ending round, one player left');
+        await this.endRound(table);
+        return;
+      }
+    
+      // Reset lastActionTimestamp when starting a new betting round (after dealing cards or blinds)
+      const isNewBettingRound = ['preflop', 'flop', 'turn', 'river'].includes(table.phase) && 
+                               (table.lastAction === null);
+      if (isNewBettingRound) {
+        table.lastActionTimestamp = Date.now();
+        logger.log('[GameManager] Reset lastActionTimestamp for new betting round:', table.phase);
+      }
+    
+      // Debug: Log the table state before checking if we should advance the phase
+      logger.log('[GameManager] Table state before shouldAdvancePhase check:', { 
+        phase: table.phase, 
+        currentPlayerIndex: table.currentPlayerIndex,
+        lastAction: table.lastAction,
+        lastActivePlayer: table.lastActivePlayer,
+        roundBets: table.roundBets,
+        currentBet: table.currentBet
+      });
+      
+      // Debug: Log the active players
+      const activePlayers = this.players.getActivePlayers(table);
+      logger.log('[GameManager] Active players:', activePlayers.map(p => ({ id: p.id, hasFolded: p.hasFolded, chips: p.chips })));
+      
+      if (this.phases.shouldAdvancePhase(table)) {
+        logger.log('[GameManager] moveToNextPlayer: Advancing phase from:', table.phase);
+        await this.moveToNextPhase(table);
+        return;
+      }
+    
+      const newIndex = this.players.getNextActivePlayerIndex(table, table.currentPlayerIndex);
+      logger.log('[GameManager] moveToNextPlayer: New index calculated:', { oldIndex: table.currentPlayerIndex, newIndex });
+      table.currentPlayerIndex = newIndex;
+      table.lastActionTimestamp = Date.now(); // Update on each move
+      logger.log('[GameManager] moveToNextPlayer updating table:', { currentPlayerIndex: table.currentPlayerIndex });
+      await this.db.updateTable(table);
+    } catch (error) {
+      const serializedError = serializeError(error);
+      console.error('[GameManager] Error in moveToNextPlayer:', { 
+        tableId: this.tableId,
+        phase: table?.phase,
+        currentPlayerIndex: table?.currentPlayerIndex,
+        errorMessage: serializedError.message,
+        errorStack: serializedError.stack 
+      });
+      logger.error('[GameManager] Error in moveToNextPlayer:', {
+        tableId: this.tableId,
+        phase: table?.phase,
+        currentPlayerIndex: table?.currentPlayerIndex,
+        errorMessage: serializedError.message,
+        errorStack: serializedError.stack,
+        timestamp: new Date().toISOString(),
+      });
+      console.error('Raw error in moveToNextPlayer:', error);
+      throw error; // Re-throw the error to be caught by the calling function
     }
-    
-    // Check if only one player remains active
-    if (this.players.getActiveCount(table) <= 1) {
-      await this.endRound(table);
-      return;
-    }
-    
-    // Check if all players have acted and bets are equal
-    if (this.phases.shouldAdvancePhase(table)) {
-      await this.moveToNextPhase(table);
-      return;
-    }
-    
-    // Move to the next active player
-    table.currentPlayerIndex = this.players.getNextActivePlayerIndex(table, table.currentPlayerIndex);
-    table.lastActionTimestamp = Date.now();
-    
-    // Update the table
-    await this.db.updateTable(table);
   }
 
   /**
@@ -427,6 +510,9 @@ export class GameManager {
         timestamp: new Date().toISOString(),
       });
       
+      // Start batching to consolidate updates
+      this.startBatch();
+      
       // Reset the deck
       this.deck.reset();
       
@@ -445,7 +531,7 @@ export class GameManager {
       table.currentBet = 0;
       table.phase = 'preflop';
       table.roundBets = {};
-      table.minRaise = table.bigBlind * 2;
+      table.minRaise = table.bigBlind;
       table.isHandInProgress = true;
       table.lastAction = null;
       table.lastActivePlayer = null;
@@ -454,15 +540,13 @@ export class GameManager {
       table.winningAmount = null;
       table.handId = handId; // Set the handId on the table
       
-      // First update the table without dealing cards
-      await this.db.updateTable(table);
+      // Queue the initial table state (replaces first db.updateTable)
+      this.queueUpdate(table);
       
       // Post blinds
       await this.postBlinds(table);
-      
-      // Update the table after posting blinds
-      await this.db.updateTable(table);
-      
+      logger.log('[GameManager] postBlinds completed:', { pot: table.pot, currentBet: table.currentBet, roundBets: table.roundBets });
+            
       // Deal hole cards to players - this stores cards in private player data, not in the table
       await this.dealHoleCards(table);
       
@@ -470,8 +554,10 @@ export class GameManager {
       table.currentPlayerIndex = this.players.getNextActivePlayerIndex(table, table.dealerPosition);
       table.lastActionTimestamp = Date.now();
       
-      // Final update of the table
-      await this.db.updateTable(table);
+      this.queueUpdate(table);
+      
+      // Commit all batched updates in one call (replaces second and third db.updateTable)
+      await this.commitBatch(table);
     } catch (error) {
       logger.error('[GameManager] Error starting new hand:', {
         tableId: this.tableId,
@@ -481,7 +567,6 @@ export class GameManager {
       throw error;
     }
   }
-
   /**
    * Clear cards for all players
    */
@@ -503,37 +588,29 @@ export class GameManager {
    */
   private async postBlinds(table: Table): Promise<void> {
     const activePlayers = this.players.getActivePlayers(table);
-    if (activePlayers.length < 2) {
-      return;
-    }
-    
-    // Ensure roundBets is initialized
-    if (!table.roundBets) {
-      table.roundBets = {};
-    }
-    
-    // Determine small and big blind positions
+    if (activePlayers.length < 2) return;
+  
+    if (!table.roundBets) table.roundBets = {};
     const sbPos = (table.dealerPosition + 1) % table.players.length;
     const bbPos = (table.dealerPosition + 2) % table.players.length;
-    
-    // Post small blind
+  
     const sbPlayer = table.players[sbPos];
     if (sbPlayer && sbPlayer.isActive && sbPlayer.chips > 0) {
       const sbAmount = Math.min(table.smallBlind, sbPlayer.chips);
-      const actualSbBet = this.players.placeBet(table, sbPlayer.id, sbAmount);
-      table.pot += actualSbBet;
-      table.roundBets[sbPlayer.id] = actualSbBet;
+      sbPlayer.chips -= sbAmount;
+      table.pot += sbAmount;
+      table.roundBets[sbPlayer.id] = (table.roundBets[sbPlayer.id] || 0) + sbAmount;
     }
-    
-    // Post big blind
+  
     const bbPlayer = table.players[bbPos];
     if (bbPlayer && bbPlayer.isActive && bbPlayer.chips > 0) {
       const bbAmount = Math.min(table.bigBlind, bbPlayer.chips);
-      const actualBbBet = this.players.placeBet(table, bbPlayer.id, bbAmount);
-      table.pot += actualBbBet;
-      table.roundBets[bbPlayer.id] = actualBbBet;
-      table.currentBet = actualBbBet;
+      bbPlayer.chips -= bbAmount;
+      table.pot += bbAmount;
+      table.roundBets[bbPlayer.id] = (table.roundBets[bbPlayer.id] || 0) + bbAmount;
+      table.currentBet = bbAmount; // Set currentBet to big blind
     }
+    logger.log('[GameManager] postBlinds:', { pot: table.pot, currentBet: table.currentBet, roundBets: table.roundBets });
   }
 
   /**
@@ -696,4 +773,65 @@ export class GameManager {
       throw error;
     }
   }
+  /**
+ * Refreshes a player's username in the table if it differs from the provided username.
+ * @param playerId The ID of the player to update
+ * @param username The new username to set
+ */
+public async refreshPlayerUsername(playerId: string, username: string): Promise<void> {
+  try {
+    // Fetch the current table state
+    const table = await this.db.getTable();
+    if (!table) {
+      logger.log(`[GameManager] Table ${this.tableId} not found, skipping username refresh`);
+      return;
+    }
+
+    // Check if players array exists
+    if (!table.players || !Array.isArray(table.players)) {
+      logger.log(`[GameManager] Players array not found for table ${this.tableId}, skipping username refresh`);
+      return;
+    }
+
+    // Find the player in the table
+    const playerIndex = table.players.findIndex((player) => player.id === playerId);
+    if (playerIndex === -1) {
+      logger.log(`[GameManager] Player ${playerId} not found in table ${this.tableId}, skipping username refresh`);
+      return;
+    }
+
+    // Check if the name needs updating
+    const currentName = table.players[playerIndex].name;
+    if (currentName === username) {
+      // No update needed
+      return;
+    }
+
+    // Log the intended update
+    logger.log(`[GameManager] Refreshing player name to "${username}" for player ${playerId} in table ${this.tableId}`);
+
+    // Start batching to consolidate the update
+    this.startBatch();
+
+    // Update the player's name in the table object
+    table.players[playerIndex].name = username;
+
+    // Queue the update
+    this.queueUpdate(table);
+
+    // Commit the batched update
+    await this.commitBatch(table);
+
+    logger.log(`[GameManager] Successfully refreshed player name for player ${playerId} in table ${this.tableId}`);
+  } catch (error) {
+    logger.error(`[GameManager] Error refreshing player name in table ${this.tableId}:`, {
+      playerId,
+      username,
+      tableId: this.tableId,
+      error: serializeError(error),
+      timestamp: new Date().toISOString(),
+    });
+    throw error;
+  }
+}
 } 
