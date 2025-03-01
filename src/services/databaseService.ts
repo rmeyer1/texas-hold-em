@@ -220,11 +220,11 @@ export class DatabaseService {
    */
   subscribeToTable(callback: (table: Table) => void): () => void {
     const tableRef = this.getTableRef();
-    console.log('[DatabaseService] Subscribing to:', tableRef.toString());
+    logger.log('[DatabaseService] Subscribing to:', tableRef.toString());
     const handler = onValue(tableRef, (snapshot) => {
       const table = snapshot.val();
       if (table) {
-        console.log('[DatabaseService] Subscription fired:', { 
+        logger.log('[DatabaseService] Subscription fired:', { 
           currentPlayerIndex: table.currentPlayerIndex,
           lastAction: table.lastAction
         });
@@ -232,7 +232,7 @@ export class DatabaseService {
       }
     });
     return () => {
-      console.log('[DatabaseService] Unsubscribing from:', tableRef.toString());
+      logger.log('[DatabaseService] Unsubscribing from:', tableRef.toString());
       off(tableRef, 'value', handler);
     };
   }

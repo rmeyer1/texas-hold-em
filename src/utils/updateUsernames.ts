@@ -1,7 +1,7 @@
 import { getAuth, updateProfile, User } from 'firebase/auth';
-import { getDatabase, ref, get, query, orderByKey, update } from 'firebase/database';
+import { ref, get, query, orderByKey, update } from 'firebase/database';
 import { database } from '@/services/firebase';
-
+import logger from './logger';
 /**
  * Updates a single user's display name (username)
  * @param user The Firebase user to update
@@ -16,12 +16,12 @@ export const updateUserDisplayName = async (
     await updateProfile(user, {
       displayName: username
     });
-    console.log(`Successfully updated username for user ${user.uid} to "${username}"`);
+    logger.log(`Successfully updated username for user ${user.uid} to "${username}"`);
     
     // Also update the username in all tables where this user is a player
     await updatePlayerNamesInTables();
   } catch (error) {
-    console.error(`Failed to update username for user ${user.uid}:`, error);
+    logger.error(`Failed to update username for user ${user.uid}:`, error);
     throw error;
   }
 };
@@ -36,8 +36,8 @@ export const updateUserDisplayName = async (
  * to list and update all users.
  */
 export const findUsersWithoutUsernames = async (): Promise<void> => {
-  console.log('This function requires Firebase Admin SDK and should be run in a secure backend environment');
-  console.log('Please implement this in a Firebase Cloud Function with proper admin credentials');
+  logger.log('This function requires Firebase Admin SDK and should be run in a secure backend environment');
+  logger.log('Please implement this in a Firebase Cloud Function with proper admin credentials');
 };
 
 /**
@@ -51,7 +51,7 @@ export const updatePlayerNamesInTables = async (): Promise<void> => {
     const currentUser = auth.currentUser;
     
     if (!currentUser) {
-      console.error('No authenticated user found');
+      logger.error('No authenticated user found');
       return;
     }
 
@@ -62,7 +62,7 @@ export const updatePlayerNamesInTables = async (): Promise<void> => {
     const tablesSnapshot = await get(query(tablesRef, orderByKey()));
     
     if (!tablesSnapshot.exists()) {
-      console.log('No tables found to update');
+      logger.log('No tables found to update');
       return;
     }
     
@@ -83,7 +83,7 @@ export const updatePlayerNamesInTables = async (): Promise<void> => {
       
       if (playerIndex !== -1) {
         // User found in this table, update their name
-        console.log(`Updating player name in table ${tableId} from "${tableData.players[playerIndex].name}" to "${newUsername}"`);
+        logger.log(`Updating player name in table ${tableId} from "${tableData.players[playerIndex].name}" to "${newUsername}"`);
         
         // Create a specific update path for this player's name
         const updatePath = `tables/${tableId}/players/${playerIndex}/name`;
@@ -96,14 +96,14 @@ export const updatePlayerNamesInTables = async (): Promise<void> => {
     // Wait for all updates to complete
     if (updatePromises.length > 0) {
       await Promise.all(updatePromises);
-      console.log(`Successfully updated player name in ${updatedTables} tables`);
+      logger.log(`Successfully updated player name in ${updatedTables} tables`);
     } else {
-      console.log('No tables found where the current user is a player');
+      logger.log('No tables found where the current user is a player');
     }
     
     return;
   } catch (error) {
-    console.error('Error updating player names in tables:', error);
+    logger.error('Error updating player names in tables:', error);
   }
 };
 

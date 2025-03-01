@@ -7,6 +7,7 @@ import { HandEvaluator } from './handEvaluator';
 import type { Table, Player, Card, PlayerAction } from '@/types/poker';
 import { serializeError } from '@/utils/errorUtils';
 import logger from '@/utils/logger';
+import { log } from 'console';
 
 export class GameManager {
   private db: DatabaseService;
@@ -89,7 +90,7 @@ export class GameManager {
    * Handle a player action (fold, check, call, raise)
    */
   public async handlePlayerAction(playerId: string, action: PlayerAction, amount?: number): Promise<void> {
-    console.log('[GameManager] handlePlayerAction called:', { playerId, action, amount });
+    logger.log('[GameManager] handlePlayerAction called:', { playerId, action, amount });
     try {
       const table = await this.db.getTable();
       if (!table) throw new Error('Table not found');
@@ -118,24 +119,13 @@ export class GameManager {
       }
     } catch (error) {
       const serializedError = serializeError(error);
-      console.error('[GameManager] Error in handlePlayerAction:', { 
+      logger.error('[GameManager] Error in handlePlayerAction:', { 
         playerId, 
         action, 
         amount, 
         errorMessage: serializedError.message,
         errorStack: serializedError.stack 
       });
-      logger.error('[GameManager] Error handling player action:', {
-        tableId: this.tableId,
-        playerId,
-        action,
-        amount,
-        errorMessage: serializedError.message,
-        errorStack: serializedError.stack,
-        timestamp: new Date().toISOString(),
-      });
-      console.error('Error handling player action:', error); // Log the raw error directly
-      throw error;
     }
   }
 

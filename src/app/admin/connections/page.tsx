@@ -103,9 +103,9 @@ export default function ConnectionsPage(): React.ReactElement {
   });
   
   const data = await response.json();
-  console.log(data);
+  logger.log(data);
 }`}</pre>
-              </div>
+              </div>  
             </div>
             
             <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md text-yellow-800">
