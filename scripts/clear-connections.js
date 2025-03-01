@@ -69,84 +69,84 @@ const req = requestLib.request(options, (res) => {
       
       if (res.statusCode === 200) {
         if (action === 'clear') {
-          console.log('Success:', response.message);
-          console.log('Connection count after clearing:', response.count);
+          logger.log('Success:', response.message);
+          logger.log('Connection count after clearing:', response.count);
           
           if (response.connections && response.connections.length > 0) {
-            console.log('\nRemaining connections:');
+            logger.log('\nRemaining connections:');
             response.connections.forEach((conn, index) => {
-              console.log(`${index + 1}. Path: ${conn.path}`);
-              console.log(`   Last activity: ${new Date(conn.lastActivity).toLocaleString()}`);
+              logger.log(`${index + 1}. Path: ${conn.path}`);
+              logger.log(`   Last activity: ${new Date(conn.lastActivity).toLocaleString()}`);
             });
           } else {
-            console.log('No active connections found after clearing.');
+            logger.log('No active connections found after clearing.');
           }
         } else if (action === 'count' || action === 'refresh') {
-          console.log('Connection count:', response.count);
+          logger.log('Connection count:', response.count);
           
           if (response.message) {
-            console.log(response.message);
+            logger.log(response.message);
           }
           
           if (response.stats) {
-            console.log('\nConnection Statistics:');
-            console.log(`- Recent (<5m): ${response.stats.recent}`);
-            console.log(`- Medium (5-15m): ${response.stats.medium}`);
-            console.log(`- Old (>15m): ${response.stats.old}`);
+            logger.log('\nConnection Statistics:');
+            logger.log(`- Recent (<5m): ${response.stats.recent}`);
+            logger.log(`- Medium (5-15m): ${response.stats.medium}`);
+            logger.log(`- Old (>15m): ${response.stats.old}`);
           }
           
           if (response.discrepancy) {
-            console.log('\nDiscrepancy detected between reported count and actual connections.');
+            logger.log('\nDiscrepancy detected between reported count and actual connections.');
           }
           
           if (response.connections && response.connections.length > 0) {
-            console.log('\nActive connections:');
+            logger.log('\nActive connections:');
             response.connections.forEach((conn, index) => {
-              console.log(`${index + 1}. Path: ${conn.path}`);
-              console.log(`   Last activity: ${new Date(conn.lastActivity).toLocaleString()}`);
+              logger.log(`${index + 1}. Path: ${conn.path}`);
+              logger.log(`   Last activity: ${new Date(conn.lastActivity).toLocaleString()}`);
             });
           } else {
-            console.log('No active connections found.');
+            logger.log('No active connections found.');
           }
         } else if (action === 'debug') {
-          console.log('Connection count:', response.count);
+          logger.log('Connection count:', response.count);
           
           if (response.stats) {
-            console.log('\nConnection Statistics:');
-            console.log(`- Recent (<5m): ${response.stats.recent}`);
-            console.log(`- Medium (5-15m): ${response.stats.medium}`);
-            console.log(`- Old (>15m): ${response.stats.old}`);
+            logger.log('\nConnection Statistics:');
+            logger.log(`- Recent (<5m): ${response.stats.recent}`);
+            logger.log(`- Medium (5-15m): ${response.stats.medium}`);
+            logger.log(`- Old (>15m): ${response.stats.old}`);
           }
           
           if (response.discrepancy) {
-            console.log('\nDiscrepancy detected between reported count and actual connections.');
+            logger.log('\nDiscrepancy detected between reported count and actual connections.');
           }
           
           if (response.connections && response.connections.length > 0) {
-            console.log('\nDetailed connection information:');
+            logger.log('\nDetailed connection information:');
             response.connections.forEach((conn, index) => {
-              console.log(`${index + 1}. Path: ${conn.path}`);
-              console.log(`   Last activity: ${new Date(conn.lastActivity).toLocaleString()}`);
-              console.log(`   Idle time: ${formatTime(conn.idleTime)}`);
+              logger.log(`${index + 1}. Path: ${conn.path}`);
+              logger.log(`   Last activity: ${new Date(conn.lastActivity).toLocaleString()}`);
+              logger.log(`   Idle time: ${formatTime(conn.idleTime)}`);
             });
           } else {
-            console.log('No active connections found.');
+            logger.log('No active connections found.');
           }
         }
         process.exit(0);
       } else {
-        console.error(`Error (${res.statusCode}):`, response.error || 'Unknown error');
+        logger.error(`Error (${res.statusCode}):`, response.error || 'Unknown error');
         process.exit(1);
       }
     } catch (error) {
-      console.error('Error parsing response:', error.message);
+      logger.error('Error parsing response:', error.message);
       process.exit(1);
     }
   });
 });
 
 req.on('error', (error) => {
-  console.error('Request error:', error.message);
+  logger.error('Request error:', error.message);
   process.exit(1);
 });
 
@@ -154,7 +154,7 @@ req.on('error', (error) => {
 req.write(requestBody);
 req.end();
 
-console.log(`Sending ${action} request to ${apiUrl}...`);
+logger.log(`Sending ${action} request to ${apiUrl}...`);
 
 // Helper function to format time in seconds to a human-readable format
 function formatTime(seconds) {

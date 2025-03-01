@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { TablePageClient } from '@/components/pages/TablePageClient';
 import { Suspense } from 'react';
 import { GameManager } from '@/services/gameManager';
+import logger from '@/utils/logger';
 
 interface PageProps {
   params: Promise<{
@@ -10,14 +11,14 @@ interface PageProps {
 }
 
 async function TableLoader({ tableId }: { tableId: string }) {
-  console.log('[TableLoader] Starting to load table:', {
+  logger.log('[TableLoader] Starting to load table:', {
     tableId,
     timestamp: new Date().toISOString(),
   });
 
   try {
     if (!tableId || typeof tableId !== 'string' || !/^[a-zA-Z0-9-]+$/.test(tableId)) {
-      console.error('[TableLoader] Invalid table ID format:', {
+      logger.error('[TableLoader] Invalid table ID format:', {
         tableId,
         timestamp: new Date().toISOString(),
       });
@@ -27,7 +28,7 @@ async function TableLoader({ tableId }: { tableId: string }) {
     // Pre-fetch table data on the server
     const tableData = await GameManager.getTableData(tableId);
     
-    console.log('[TableLoader] Table data fetched:', {
+    logger.log('[TableLoader] Table data fetched:', {
       tableId,
       hasData: !!tableData,
       playerCount: tableData?.players?.length ?? 0,
@@ -35,7 +36,7 @@ async function TableLoader({ tableId }: { tableId: string }) {
     });
 
     if (!tableData) {
-      console.error('[TableLoader] No table data found:', {
+      logger.error('[TableLoader] No table data found:', {
         tableId,
         timestamp: new Date().toISOString()
       });
@@ -43,7 +44,7 @@ async function TableLoader({ tableId }: { tableId: string }) {
     }
     return <TablePageClient tableId={tableId} initialData={tableData} />;
   } catch (error) {
-    console.error('[TableLoader] Error loading table:', {
+    logger.error('[TableLoader] Error loading table:', {
       tableId,
       error: error instanceof Error ? {
         message: error.message,
@@ -63,14 +64,14 @@ export default async function TablePage({ params }: PageProps): Promise<React.Re
   // Await the params object to properly handle dynamic route parameters
   const resolvedParams = await params;
   
-  console.log('[TablePage] Rendering with params:', {
+  logger.log('[TablePage] Rendering with params:', {
     params: resolvedParams,
     timestamp: new Date().toISOString()
   });
 
   // Validate table ID format first
   if (!resolvedParams?.id || !/^[a-zA-Z0-9-]+$/.test(resolvedParams.id)) {
-    console.error('[TablePage] Invalid table ID format:', {
+    logger.error('[TablePage] Invalid table ID format:', {
       params: resolvedParams,
       timestamp: new Date().toISOString()
     });

@@ -22,53 +22,16 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
   const gameManagerRef = useRef<GameManager | null>(null);
   const previousDisplayName = useRef<string | null>(null);
 
-  // Function to refresh player name in the table
+  // Use GameManager's refreshPlayerUsername
   const refreshPlayerName = useCallback(async () => {
-    if (!user || !tableId || !user.displayName) return;
+    if (!user || !tableId || !user.displayName || !gameManagerRef.current) return;
     
     try {
-      const database = getDatabase();
-      const tablePath = `tables/${tableId}`;
-      const tableRef = ref(database, tablePath);
-      
-      // Get the current table data
-      const snapshot = await get(tableRef);
-      if (!snapshot.exists()) return;
-      
-      const tableData = snapshot.val();
-      if (!tableData) {
-        logger.log(`Table data not found for table ${tableId}`);
-        return;
-      }
-      
-      // Check if players array exists, if not, initialize it
-      if (!tableData.players) {
-        logger.log(`Players array not found for table ${tableId}, skipping name refresh`);
-        return;
-      }
-      
-      const userId = user.uid;
-      
-      // Find the player in the table
-      const playerIndex = tableData.players.findIndex((player: { id: string }) => player.id === userId);
-      
-      if (playerIndex !== -1) {
-        // Check if the name needs to be updated
-        if (tableData.players[playerIndex].name !== user.displayName) {
-          logger.log(`Refreshing player name to "${user.displayName}" in table ${tableId}`);
-          
-          // Create an update object with the path as key and new name as value
-          const updates: Record<string, string> = {};
-          updates[`${tablePath}/players/${playerIndex}/name`] = user.displayName;
-          
-          await update(ref(database), updates);
-          logger.log(`Successfully refreshed player name in table ${tableId}`);
-        }
-      }
+      await gameManagerRef.current.refreshPlayerUsername(user.uid, user.displayName);
     } catch (error) {
-      logger.error(`Error refreshing player name in table ${tableId}:`, {
+      logger.error(`[TablePageClient] Error refreshing player name in table ${tableId}:`, {
         error: serializeError(error),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
   }, [user, tableId]);
@@ -79,47 +42,51 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
       setIsLoading(false);
       return;
     }
-
+  
     try {
       gameManagerRef.current = new GameManager(tableId);
       
       const unsubscribe = gameManagerRef.current.subscribeToTableState((tableState) => {
-        setTable(tableState);
+        logger.log('[TablePageClient] Table state updated:', { 
+          currentPlayerIndex: tableState.currentPlayerIndex,
+          lastAction: tableState.lastAction,
+          phase: tableState.phase
+        });
+        setTable(prev => {
+          const newTable = { ...prev, ...tableState };
+          logger.log('[TablePageClient] Setting new table state:', { currentPlayerIndex: newTable.currentPlayerIndex });
+          return newTable;
+        });
         setIsLoading(false);
       });
-
-      // Refresh player name when component mounts
+  
       if (user && user.displayName) {
         refreshPlayerName();
       }
-
-      return () => {
-        unsubscribe();
-      };
+  
+      return () => unsubscribe();
     } catch (error) {
       setError(`Error loading table: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setIsLoading(false);
     }
   }, [tableId, refreshPlayerName, user]);
 
-  // Effect to handle user display name changes
   useEffect(() => {
     if (!user || !table) return;
 
-    // Check if the display name has changed
     if (user.displayName !== previousDisplayName.current) {
       previousDisplayName.current = user.displayName;
       
-      // Find if the user is already in the table
       const userId = user.uid;
       const isUserInTable = table.players?.some(player => player.id === userId) ?? false;
       
       if (isUserInTable) {
-        logger.log(`Detected display name change to "${user.displayName}", updating player name in current table`);
+        logger.log(`[TablePageClient] Detected display name change to "${user.displayName}", updating player name`);
         refreshPlayerName();
       }
     }
   }, [user, table, refreshPlayerName]);
+
 
   useEffect(() => {
     if (!user || !tableId || !gameManagerRef.current || !table) return;
@@ -166,15 +133,18 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
   ) => {
     if (!user || !gameManagerRef.current) return;
 
+    // Ensure amount is not undefined for check actions
+    const validAmount = action === 'check' ? 0 : amount;
+
     try {
-      await gameManagerRef.current.handlePlayerAction(user.uid, action, amount);
+      await gameManagerRef.current.handlePlayerAction(user.uid, action, validAmount);
       // Optional: Add success feedback
       // toast.success(`Successfully ${action}ed`);
     } catch (error) {
       logger.error('Error handling player action:', {
         error: serializeError(error),
         action,
-        amount,
+        amount: validAmount,
         userId: user.uid,
         timestamp: new Date().toISOString()
       });

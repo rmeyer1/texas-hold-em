@@ -52,7 +52,7 @@ export default function UpdateUsernamesPage(): React.ReactElement {
       }
 
       // Store the original console.log function
-      const originalConsoleLog = console.log;
+      const originalConsoleLog = console.log; 
       let tableUpdateInfo = '';
       
       // Override console.log to capture table update information
