@@ -429,7 +429,7 @@ export class BettingManager {
     return {
       roundBets: {},
       currentBet: 0,
-      minRaise: table.bigBlind * 2,
+      minRaise: table.bigBlind,
       lastBettor: null
     };
   }
