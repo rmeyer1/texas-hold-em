@@ -1,14 +1,17 @@
 import type { Table } from '@/types/poker';
 import { PlayerManager } from './playerManager';
+import { BettingManager } from './bettingManager';
 import logger from '@/utils/logger';
 
 export class PhaseManager {
   private tableId: string;
   private playerManager: PlayerManager;
+  private bettingManager: BettingManager;
 
   constructor(tableId: string) {
     this.tableId = tableId;
     this.playerManager = new PlayerManager(tableId);
+    this.bettingManager = new BettingManager(tableId);
   }
 
   /**
@@ -138,11 +141,11 @@ export class PhaseManager {
 
       // If only one active player remains, move to showdown
       const activeCount = this.playerManager.getActiveCount(table);
-      const haveAllActed = this.playerManager.haveAllPlayersActed(table);
+      const isRoundComplete = this.bettingManager.isRoundComplete(table);
       
       logger.log('[PhaseManager] shouldAdvancePhase checking:', { 
         activeCount, 
-        haveAllActed,
+        isRoundComplete,
         currentPlayerIndex: table.currentPlayerIndex,
         lastAction: table.lastAction
       });
@@ -153,7 +156,7 @@ export class PhaseManager {
       }
       
       // Check if all players have acted and bets are equal
-      const result = haveAllActed;
+      const result = isRoundComplete;
       logger.log('[PhaseManager] shouldAdvancePhase result:', { result });
       return result;
     } catch (error) {
@@ -165,18 +168,5 @@ export class PhaseManager {
       console.error('[PhaseManager] Error in shouldAdvancePhase:', error);
       return false;
     }
-  }
-
-  /**
-   * Initialize the betting round for the current phase
-   */
-  initializeBettingRound(table: Table): void {
-    // Reset betting for the new round
-    table.roundBets = {}; // Initialize as empty object
-    table.currentBet = 0;
-    table.minRaise = table.bigBlind * 2;
-    
-    // Set the first player to act
-    table.currentPlayerIndex = this.getFirstToActIndex(table);
   }
 } 
