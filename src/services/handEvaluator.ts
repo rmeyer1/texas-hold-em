@@ -1,6 +1,6 @@
 import { findBestHand } from '@/utils/handEvaluator';
 import { DatabaseService } from './databaseService';
-import type { Table, Hand, Card } from '@/types/poker';
+import type { Table, Hand, Card, WinningHand } from '@/types/poker';
 import logger from '@/utils/logger';
 import { serializeError } from '@/utils/errorUtils';
 
@@ -67,24 +67,52 @@ export class HandEvaluator {
   /**
    * Determine the winners of the current hand
    */
-  async getWinners(table: Table): Promise<string[]> {
+  async getWinners(table: Table): Promise<{ winnerIds: string[]; winningHands: WinningHand[] }> {
     try {
       // If only one active player, they win by default
       const activePlayers = table.players.filter(p => p.isActive && !p.hasFolded);
       if (activePlayers.length === 1) {
-        return [activePlayers[0].id];
+        // For default winner, still evaluate their hand if there are community cards
+        if (table.communityCards.length > 0) {
+          const winnerHand = await this.evaluatePlayerHand(activePlayers[0].id, table.communityCards);
+          if (winnerHand) {
+            return {
+              winnerIds: [activePlayers[0].id],
+              winningHands: [{
+                playerId: activePlayers[0].id,
+                rank: winnerHand.rank,
+                description: winnerHand.description,
+                value: winnerHand.value
+              }]
+            };
+          }
+        }
+        
+        // No community cards or couldn't evaluate hand
+        return {
+          winnerIds: [activePlayers[0].id],
+          winningHands: []
+        };
       }
 
       // Evaluate all hands
-      const hands = await this.evaluateHands(table);
+      const evaluatedHands = await this.evaluateHands(table);
       
       // Find the highest hand value
-      const maxValue = Math.max(...hands.map(h => h.hand.value));
+      const maxValue = Math.max(...evaluatedHands.map(h => h.hand.value));
       
-      // Return all players with the highest hand value (could be multiple in case of a tie)
-      return hands
-        .filter(h => h.hand.value === maxValue)
-        .map(h => h.playerId);
+      // Get winners with the highest hand value
+      const winners = evaluatedHands.filter(h => h.hand.value === maxValue);
+      
+      return {
+        winnerIds: winners.map(w => w.playerId),
+        winningHands: winners.map(w => ({
+          playerId: w.playerId,
+          rank: w.hand.rank,
+          description: w.hand.description,
+          value: w.hand.value
+        }))
+      };
     } catch (error) {
       logger.error('[HandEvaluator] Error getting winners:', {
         tableId: this.tableId,

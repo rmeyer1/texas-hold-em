@@ -1,4 +1,3 @@
-import { getAuth } from 'firebase/auth';
 import { DatabaseService } from './databaseService';
 import { DeckManager } from './deckManager';
 import { PlayerManager } from './playerManager';
@@ -7,7 +6,6 @@ import { HandEvaluator } from './handEvaluator';
 import type { Table, Player, Card, PlayerAction } from '@/types/poker';
 import { serializeError } from '@/utils/errorUtils';
 import logger from '@/utils/logger';
-import { log } from 'console';
 
 export class GameManager {
   private db: DatabaseService;
@@ -19,7 +17,6 @@ export class GameManager {
   private pendingUpdates: Partial<Table> = {};
   private isBatching: boolean = false;
   private tableStateCallback?: (table: Table) => void;
-  private static readonly TURN_TIME_LIMIT = 45000; // 45 seconds in milliseconds
   private static readonly DEFAULT_SMALL_BLIND = 10;
   private static readonly DEFAULT_BIG_BLIND = 20;
 
@@ -31,6 +28,14 @@ export class GameManager {
     this.phases = new PhaseManager(tableId);
     this.handEvaluator = new HandEvaluator(tableId);
   }
+
+  /**
+   * Get the hand evaluator instance
+   */
+  public getHandEvaluator(): HandEvaluator {
+    return this.handEvaluator;
+  }
+
   private startBatch(): void {
     this.isBatching = true;
     this.pendingUpdates = {};
@@ -431,25 +436,26 @@ private async handleCall(table: Table, playerId: string): Promise<void> {
         table.roundBets = {};
       }
       
-      // Determine winners
-      const winners = await this.handEvaluator.getWinners(table);
+      // Get winners AND their hands at the same time
+      const { winnerIds, winningHands } = await this.handEvaluator.getWinners(table);
       
       // Calculate winnings
-      const winningAmount = Math.floor(table.pot / winners.length);
+      const winningAmount = Math.floor(table.pot / winnerIds.length);
       
       // Distribute pot to winners
-      winners.forEach(winnerId => {
+      winnerIds.forEach(winnerId => {
         const winner = table.players.find(p => p.id === winnerId);
         if (winner) {
           winner.chips += winningAmount;
         }
       });
       
-      // Update table state
+      // Update table state with ALL information
       table.phase = 'showdown';
       table.isHandInProgress = false;
-      table.winners = winners;
+      table.winners = winnerIds;
       table.winningAmount = winningAmount;
+      table.winningHands = winningHands; // Store the winning hands in the table
       
       // Update the table
       await this.db.updateTable(table);
@@ -528,6 +534,7 @@ private async handleCall(table: Table, playerId: string): Promise<void> {
       table.lastBettor = null;
       table.winners = null;
       table.winningAmount = null;
+      table.winningHands = null; // Reset winning hands
       table.handId = handId; // Set the handId on the table
       
       // Queue the initial table state (replaces first db.updateTable)
