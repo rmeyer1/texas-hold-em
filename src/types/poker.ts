@@ -26,6 +26,13 @@ export interface Hand {
   description: string;
 }
 
+export interface WinningHand {
+  playerId: string;  // ID of the player
+  rank: HandRank;    // Type of hand (e.g., "Full House")
+  description: string; // Description of the hand (e.g., "Kings full of Aces")
+  value: number;     // Numerical value for comparison
+}
+
 export interface PrivatePlayerData {
   holeCards: Card[];
   lastUpdated: number;
@@ -71,6 +78,7 @@ export interface Table {
   maxPlayers?: number; // Maximum number of players allowed at the table
   winners?: string[] | null; // New: for endRound
   winningAmount?: number | null; // New: for endRound
+  winningHands?: WinningHand[] | null; // New field to store winning hand details
   nextHandScheduled?: boolean; // Flag to track if a new hand is scheduled to start
   handId?: string; // Unique identifier for each hand to track hand changes
 } 

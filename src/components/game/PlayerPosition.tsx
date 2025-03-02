@@ -6,6 +6,7 @@ import { getAuth } from 'firebase/auth';
 import { useAuth } from '@/contexts/AuthContext';
 import logger from '@/utils/logger';
 import { serializeError } from '@/utils/errorUtils';
+import { DealerChip } from './DealerChip';
 
 interface PlayerPositionProps {
   player: Player;
@@ -670,48 +671,15 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
       style={positionStyle}
     >
       <div className="flex flex-col items-center gap-1">
-        {/* Player avatar and info */}
-        <div 
-          className={`
-            relative rounded-full p-1
-            ${isCurrentPlayer ? 'bg-yellow-400' : 'bg-gray-700'}
-            ${player.hasFolded ? 'opacity-50' : 'opacity-100'}
-            transition-all duration-300 ease-in-out
-            ${isCurrentPlayer ? 'animate-pulse-slow' : ''}
-          `}
-        >
-          <div className={`
-            flex flex-col items-center justify-center
-            rounded-full 
-            ${isCurrentPlayer ? 'bg-blue-900' : 'bg-gray-800'}
-            ${isMobile ? 'w-10 h-10' : 'w-12 h-12'}
-            text-white
-            overflow-hidden
-            relative
-          `}>
-            {/* Player identifier */}
-            <span className={`font-bold ${isMobile ? 'text-xs' : 'text-sm'}`}>
-              {player.name ? player.name.substring(0, 2).toUpperCase() : 'P'}
-            </span>
-            
-            {/* Player chips */}
-            <span className={`
-              absolute bottom-0 left-0 right-0
-              text-center bg-black/50 backdrop-blur-sm
-              ${isMobile ? 'text-[8px] py-0.5' : 'text-xs py-1'}
-              font-mono font-bold
-            `}>
-              {player.chips}
-            </span>
-          </div>
-          
-          {/* Dealer button */}
-          {isDealer && (
-            <div className="absolute -top-2 -right-2 w-5 h-5 bg-white rounded-full flex items-center justify-center text-[10px] font-bold text-blue-900 border border-blue-900">
-              D
-            </div>
-          )}
-        </div>
+        {/* Dealer chip - now using the separate component */}
+        {isDealer && (
+          <DealerChip 
+            position="custom" 
+            top="-4px" 
+            right="0" 
+            isMobile={isMobile} 
+          />
+        )}
         
         {/* Player name - Improved for mobile */}
         <div className={`
