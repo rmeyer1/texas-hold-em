@@ -28,10 +28,10 @@ export const PokerTable: React.FC<PokerTableProps> = ({
   const { user } = useAuth();
   const [isMobile, setIsMobile] = useState(false);
   const [raiseAmount, setRaiseAmount] = useState<number>(0);
-  const [localTable, setLocalTable] = useState<Table | null>(null); // Local state for table
-  const gameManager = useMemo(() => new GameManager(table.id!), [table.id]); // GameManager instance
+  const [localTable, setLocalTable] = useState<Table | null>(null);
+  const [validationError, setValidationError] = useState<string[]>([]);
+  const gameManager = useMemo(() => new GameManager(table.id!), [table.id]);
 
-  // This function should be defined before it's used
   const isValidTable = (tableData: Partial<Table>): { isValid: boolean; errors: string[]; sanitizedTable?: Table } => {
     if (!tableData) {
       return { isValid: false, errors: ['Table data is undefined'] };
@@ -39,47 +39,19 @@ export const PokerTable: React.FC<PokerTableProps> = ({
     
     const errors: string[] = [];
     
-    // Check required properties
     if (!tableData.id) errors.push('Table ID is missing');
     if (!tableData.players) errors.push('Players array is missing');
     if (typeof tableData.pot !== 'number') errors.push('Pot value is invalid');
     if (typeof tableData.currentBet !== 'number') errors.push('Current bet value is invalid');
     if (typeof tableData.dealerPosition !== 'number') errors.push('Dealer position is invalid');
     
-    // If there are any errors, return false
     if (errors.length > 0) {
       return { isValid: false, errors };
     }
     
-    // Cast to Table type if all validations pass
-    const sanitizedTable = tableData as Table;
-    return { isValid: true, errors: [], sanitizedTable };
+    return { isValid: true, errors: [], sanitizedTable: tableData as Table };
   };
-  
-  // Validate the table
-  const validationResult = isValidTable(table);
-  if (!validationResult.isValid) {
-    return (
-      <div className="p-4 bg-red-100 text-red-800 rounded-md">
-        Invalid table data. Please try refreshing the page.
-      </div>
-    );
-  }
-  
-  const displayTable = localTable || validationResult.sanitizedTable!; // Use localTable if available
-  const players = displayTable.players;
-  const currentPlayer = currentPlayerId ? players.find((p) => p?.id === currentPlayerId) : undefined;
-  const pot = displayTable.pot;
-  const currentBet = displayTable.currentBet;
-  const dealerPosition = displayTable.dealerPosition;
-  const phase = displayTable.phase;
-  const communityCards = displayTable.communityCards;
-  const isHandInProgress = displayTable.isHandInProgress;
-  const activePlayerIndex = displayTable.currentPlayerIndex;
-  const activePlayer = activePlayerIndex >= 0 && activePlayerIndex < players.length ? players[activePlayerIndex] : undefined;
-  const isPlayerTurn = currentPlayerId && activePlayer && activePlayer.id === currentPlayerId;
 
-  // Keep: Check if we're on mobile when component mounts
   useEffect(() => {
     const checkIfMobile = (): void => {
       setIsMobile(window.innerWidth < 640);
@@ -90,20 +62,20 @@ export const PokerTable: React.FC<PokerTableProps> = ({
     return () => window.removeEventListener('resize', checkIfMobile);
   }, []);
 
-  // Keep: Initialize localTable and handle username refresh
   useEffect(() => {
     const validationResult = isValidTable(table);
-    if (validationResult.isValid) {
-      setLocalTable(validationResult.sanitizedTable!); // Set initial local state
+    if (validationResult.isValid && validationResult.sanitizedTable) {
+      setLocalTable(validationResult.sanitizedTable);
+      setValidationError([]);
       if (user && currentPlayerId && user.displayName && table.id) {
-        gameManager.refreshPlayerUsername(currentPlayerId, user.displayName); // Centralize username refresh
+        gameManager.refreshPlayerUsername(currentPlayerId, user.displayName);
       }
+    } else {
+      setValidationError(validationResult.errors);
     }
   }, [user, currentPlayerId, table, gameManager]);
 
-  // Handle player actions
   const handleAction = (action: 'fold' | 'check' | 'call' | 'raise', amount?: number) => {
-    // Ensure amount is not undefined for check actions
     const validAmount = action === 'check' ? 0 : amount;
     
     logger.log('[PokerTable] handleAction called:', { action, validAmount });
@@ -123,7 +95,6 @@ export const PokerTable: React.FC<PokerTableProps> = ({
           player.hasFolded = true;
           break;
         case 'check':
-          // For check, explicitly set the round bet to current value or 0
           newTable.roundBets[currentPlayerId] = newTable.roundBets[currentPlayerId] || 0;
           break;
         case 'call':
@@ -144,7 +115,6 @@ export const PokerTable: React.FC<PokerTableProps> = ({
       }
       newTable.lastAction = action;
       newTable.lastActivePlayer = currentPlayerId;
-      // Optimistically advance turn
       if (action === 'check' && newTable.currentBet === 0) {
         newTable.currentPlayerIndex = (newTable.currentPlayerIndex + 1) % newTable.players.length;
       }
@@ -152,21 +122,30 @@ export const PokerTable: React.FC<PokerTableProps> = ({
       return newTable;
     });
   
-    // Pass the validAmount instead of potentially undefined amount
     onPlayerAction(action, validAmount);
     logger.log('[PokerTable] handleAction completed');
   };
 
-  if (currentPlayerId) {
-    logger.log('[PokerTable] Player turn check:', {
-      isPlayerTurn,
-      currentPlayerId,
-      activePlayerIndex,
-      activePlayerId: activePlayer?.id,
-      match: activePlayer?.id === currentPlayerId,
-      timestamp: new Date().toISOString(),
-    });
+  if (validationError.length > 0) {
+    return (
+      <div className="p-4 bg-red-100 text-red-800 rounded-md">
+        Invalid table data: {validationError.join(', ')}. Please try refreshing the page.
+      </div>
+    );
   }
+
+  const displayTable = localTable || (table as Table);
+  const players = displayTable.players;
+  const currentPlayer = currentPlayerId ? players.find((p) => p?.id === currentPlayerId) : undefined;
+  const pot = displayTable.pot;
+  const currentBet = displayTable.currentBet;
+  const dealerPosition = displayTable.dealerPosition;
+  const phase = displayTable.phase;
+  const communityCards = displayTable.communityCards;
+  const isHandInProgress = displayTable.isHandInProgress;
+  const activePlayerIndex = displayTable.currentPlayerIndex;
+  const activePlayer = activePlayerIndex >= 0 && activePlayerIndex < players.length ? players[activePlayerIndex] : undefined;
+  const isPlayerTurn = currentPlayerId && activePlayer && activePlayer.id === currentPlayerId;
 
   const validPlayers = players.filter((player): player is Player => {
     return Boolean(
@@ -182,7 +161,6 @@ export const PokerTable: React.FC<PokerTableProps> = ({
 
   const playerBet = currentPlayerId && displayTable.roundBets ? (displayTable.roundBets[currentPlayerId] || 0) : 0;
 
-  // Keep: UI rendering, updated to use displayTable
   return (
     <div className="relative w-full max-w-6xl mx-auto">
       <div className="w-full text-center mb-4">
@@ -219,7 +197,6 @@ export const PokerTable: React.FC<PokerTableProps> = ({
           <div className="absolute inset-[4px] bg-gradient-to-b from-teal-800 to-teal-900 rounded-[39%]">
             <div className="absolute inset-0 rounded-[39%] bg-gradient-to-t from-transparent to-teal-700 opacity-20"></div>
             <div className="absolute top-[30%] sm:top-[40%] md:top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10 scale-[0.7] sm:scale-[0.8] md:scale-[0.9] lg:scale-100">
-              {/* Show WinnerDisplay during showdown phase when winners are available */}
               {phase === 'showdown' && displayTable.winners && displayTable.winners.length > 0 && displayTable.winningAmount ? (
                 <WinnerDisplay 
                   winnerNames={displayTable.winners.map(winnerId => {
@@ -255,14 +232,11 @@ export const PokerTable: React.FC<PokerTableProps> = ({
 
       {currentPlayerId && currentPlayer && !currentPlayer.hasFolded && (
         <div className="mt-4 sm:mt-6 md:mt-8 flex flex-col items-center gap-3 p-3 bg-gradient-to-b from-gray-800 to-gray-900 rounded-xl shadow-2xl border border-gray-700">
-          {/* Row 1: Player turn status and chips */}
           <div className="flex justify-between items-center w-full">
-            {/* Chips on the left */}
             <div className="flex items-center justify-center px-3 py-1 rounded-md text-sm font-bold bg-gray-800 text-green-400 border border-gray-700">
               Chips: ${currentPlayer.chips}
             </div>
             
-            {/* Turn status in the center */}
             <div className="text-center">
               {isPlayerTurn ? (
                 <div className="text-yellow-400 font-bold text-sm md:text-lg animate-pulse">Your Turn</div>
@@ -271,11 +245,9 @@ export const PokerTable: React.FC<PokerTableProps> = ({
               )}
             </div>
             
-            {/* Empty div for spacing */}
             <div className="w-[120px]"></div>
           </div>
           
-          {/* Row 2: All betting controls in one row */}
           <div className="flex flex-wrap items-center justify-center gap-2 w-full">
             <button
               onClick={() => handleAction('fold')}
@@ -321,7 +293,6 @@ export const PokerTable: React.FC<PokerTableProps> = ({
             </button>
           </div>
           
-          {/* Row 3: Timer centered at bottom */}
           {isPlayerTurn && (
             <div className="flex justify-center w-full">
               <TurnTimer table={displayTable} isCurrentPlayer={true} />

@@ -17,6 +17,28 @@
           ".write": "auth != null && auth.uid === $playerId"
         }
       }
+    },
+    "chats": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$chatId": {
+        ".read": "auth != null && data.child('participants').val().contains(auth.uid)",
+        ".write": "auth != null && (!data.exists() || data.child('participants').val().contains(auth.uid))",
+        "messages": {
+          ".read": "auth != null && root.child('chats').child($chatId).child('participants').val().contains(auth.uid)",
+          "$messageId": {
+            ".write": "auth != null && root.child('chats').child($chatId).child('participants').val().contains(auth.uid) && (!data.exists() || data.child('senderId').val() === auth.uid)",
+            ".validate": "newData.hasChildren(['text', 'senderId', 'timestamp']) && newData.child('senderId').val() === auth.uid && newData.child('text').isString() && newData.child('timestamp').isNumber() && newData.child('text').val().length <= 1000"
+          }
+        },
+        "participants": {
+          ".read": "auth != null && data.val().contains(auth.uid)",
+          ".write": "auth != null && (!data.exists() || data.val().contains(auth.uid))"
+        },
+        "lastActivity": {
+          ".write": "auth != null && root.child('chats').child($chatId).child('participants').val().contains(auth.uid)"
+        }
+      }
     }
   }
 } 

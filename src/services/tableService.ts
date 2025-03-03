@@ -2,12 +2,24 @@ import { ref, set, update, onValue, off, get, type DataSnapshot } from 'firebase
 import { database } from './firebase';
 import type { Table, Player } from '@/types/poker';
 import { connectionManager } from './connectionManager';
+import { GameChatConnector } from './gameChatConnector';
+import logger from '@/utils/logger';
 
 export class TableService {
   private tableRef;
+  private gameChatConnector: GameChatConnector;
 
   constructor(tableId: string) {
     this.tableRef = ref(database, `tables/${tableId}`);
+    this.gameChatConnector = new GameChatConnector(tableId);
+  }
+
+  /**
+   * Get the current table state
+   */
+  public async getTable(): Promise<Table | null> {
+    const snapshot = await get(this.tableRef);
+    return snapshot.exists() ? snapshot.val() as Table : null;
   }
 
   private async ensureTableExists(): Promise<Table> {
@@ -60,9 +72,9 @@ export class TableService {
       communityCards: [],
       pot: 0,
       currentBet: 0,
-      dealerPosition: 0,
-      phase: 'preflop',
-      currentPlayerIndex: 0,
+      dealerPosition: -1,
+      phase: 'waiting',
+      currentPlayerIndex: -1,
       smallBlind: 10,
       bigBlind: 20,
       lastActionTimestamp: Date.now(),
@@ -77,10 +89,18 @@ export class TableService {
       lastBettor: null,
       isPrivate: false,
       password: null,
-      gameStarted: false
+      gameStarted: false,
+      handId: ''
     };
 
     await set(this.tableRef, initialTable);
+    
+    try {
+      await this.gameChatConnector.ensureTableChatRoom(initialTable);
+      logger.log('[TableService] Table and chat room created:', { tableId });
+    } catch (error) {
+      logger.error('[TableService] Error creating table chat room:', { tableId, error });
+    }
   }
 
   public async updateTable(tableData: Partial<Table>): Promise<void> {
@@ -121,6 +141,22 @@ export class TableService {
 
     const players = [...currentPlayers, newPlayer];
     await update(this.tableRef, { players });
+
+    try {
+      // Add player to the table chat room
+      await this.gameChatConnector.addPlayerToTableChat(player.id);
+      logger.log('[TableService] Player added to table and chat:', { 
+        tableId: this.tableRef.key,
+        playerId: player.id 
+      });
+    } catch (error) {
+      logger.error('[TableService] Error adding player to chat room:', {
+        tableId: this.tableRef.key,
+        playerId: player.id,
+        error
+      });
+      // Don't throw here - we want the player to be added to the table even if chat room addition fails
+    }
   }
 
   public async removePlayer(playerId: string): Promise<void> {
