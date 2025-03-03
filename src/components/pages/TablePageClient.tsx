@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getDatabase, ref, update, get } from 'firebase/database';
 import logger from '@/utils/logger';
 import { serializeError } from '@/utils/errorUtils';
+import chatService from '@/services/chatService';
 
 interface TablePageClientProps {
   tableId: string;
@@ -103,6 +104,10 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
             chips: 1000,
             position: table.players?.length ?? 0,
           });
+
+          // Ensure chat room is activated for the player
+          const chatRoomId = `table_${tableId}`;
+          chatService.setActiveChatRoom(chatRoomId);
         };
         
         joinTable();
@@ -112,6 +117,21 @@ export const TablePageClient: React.FC<TablePageClientProps> = ({ tableId, initi
           timestamp: new Date().toISOString()
         });
       }
+    } else {
+      // If user is already in table, ensure chat room is activated
+      const activateChat = async (): Promise<void> => {
+        try {
+          const chatRoomId = `table_${tableId}`;
+          chatService.setActiveChatRoom(chatRoomId);
+        } catch (error: unknown) {
+          logger.error('Failed to activate chat room:', {
+            error: serializeError(error),
+            timestamp: new Date().toISOString()
+          });
+        }
+      };
+      
+      activateChat();
     }
   }, [user, tableId, table]);
 
