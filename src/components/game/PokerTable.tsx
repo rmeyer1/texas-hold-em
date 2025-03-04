@@ -30,7 +30,13 @@ export const PokerTable: React.FC<PokerTableProps> = ({
   const [raiseAmount, setRaiseAmount] = useState<number>(0);
   const [localTable, setLocalTable] = useState<Table | null>(null);
   const [validationError, setValidationError] = useState<string[]>([]);
-  const gameManager = useMemo(() => new GameManager(table.id!), [table.id]);
+  const gameManager = useMemo(() => {
+    if (!table.id) {
+      logger.error('[PokerTable] Cannot initialize GameManager: table.id is undefined');
+      return null;
+    }
+    return new GameManager(table.id);
+  }, [table.id]);
 
   const isValidTable = (tableData: Partial<Table>): { isValid: boolean; errors: string[]; sanitizedTable?: Table } => {
     if (!tableData) {
@@ -40,16 +46,27 @@ export const PokerTable: React.FC<PokerTableProps> = ({
     const errors: string[] = [];
     
     if (!tableData.id) errors.push('Table ID is missing');
-    if (!tableData.players) errors.push('Players array is missing');
+    if (!Array.isArray(tableData.players)) errors.push('Players array is missing or invalid');
     if (typeof tableData.pot !== 'number') errors.push('Pot value is invalid');
     if (typeof tableData.currentBet !== 'number') errors.push('Current bet value is invalid');
     if (typeof tableData.dealerPosition !== 'number') errors.push('Dealer position is invalid');
+    if (typeof tableData.phase !== 'string') errors.push('Game phase is invalid');
     
     if (errors.length > 0) {
       return { isValid: false, errors };
     }
     
-    return { isValid: true, errors: [], sanitizedTable: tableData as Table };
+    // Ensure all required properties have default values
+    const sanitizedTable = {
+      ...tableData,
+      players: tableData.players || [],
+      roundBets: tableData.roundBets || {},
+      communityCards: tableData.communityCards || [],
+      isHandInProgress: tableData.isHandInProgress || false,
+      currentPlayerIndex: tableData.currentPlayerIndex || 0,
+    } as Table;
+    
+    return { isValid: true, errors: [], sanitizedTable };
   };
 
   useEffect(() => {
@@ -68,7 +85,7 @@ export const PokerTable: React.FC<PokerTableProps> = ({
       setLocalTable(validationResult.sanitizedTable);
       setValidationError([]);
       if (user && currentPlayerId && user.displayName && table.id) {
-        gameManager.refreshPlayerUsername(currentPlayerId, user.displayName);
+        gameManager?.refreshPlayerUsername(currentPlayerId, user.displayName);
       }
     } else {
       setValidationError(validationResult.errors);
@@ -135,8 +152,15 @@ export const PokerTable: React.FC<PokerTableProps> = ({
   }
 
   const displayTable = localTable || (table as Table);
+  if (!displayTable || !displayTable.players) {
+    return (
+      <div className="p-4 bg-red-100 text-red-800 rounded-md">
+        Invalid table data: Missing players array. Please try refreshing the page.
+      </div>
+    );
+  }
   const players = displayTable.players;
-  const currentPlayer = currentPlayerId ? players.find((p) => p?.id === currentPlayerId) : undefined;
+  const currentPlayer = currentPlayerId ? players.find((p) => p?.id === currentPlayerId) : null;
   const pot = displayTable.pot;
   const currentBet = displayTable.currentBet;
   const dealerPosition = displayTable.dealerPosition;
