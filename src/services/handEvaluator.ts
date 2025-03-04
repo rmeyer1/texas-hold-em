@@ -44,6 +44,11 @@ export class HandEvaluator {
     try {
       const activePlayers = table.players.filter(p => p.isActive && !p.hasFolded);
       
+      // Add a check for community cards
+      if (!table.communityCards || table.communityCards.length === 0) {
+        throw new Error('Cannot evaluate hands without community cards');
+      }
+      
       // Evaluate each player's hand
       const handPromises = activePlayers.map(async player => {
         const hand = await this.evaluatePlayerHand(player.id, table.communityCards);
@@ -73,7 +78,8 @@ export class HandEvaluator {
       const activePlayers = table.players.filter(p => p.isActive && !p.hasFolded);
       if (activePlayers.length === 1) {
         // For default winner, still evaluate their hand if there are community cards
-        if (table.communityCards.length > 0) {
+        // Add a null/undefined check before accessing .length
+        if (table.communityCards && table.communityCards.length > 0) {
           const winnerHand = await this.evaluatePlayerHand(activePlayers[0].id, table.communityCards);
           if (winnerHand) {
             return {
@@ -91,6 +97,16 @@ export class HandEvaluator {
         // No community cards or couldn't evaluate hand
         return {
           winnerIds: [activePlayers[0].id],
+          winningHands: []
+        };
+      }
+
+      // Make sure community cards exist before proceeding with hand evaluation
+      if (!table.communityCards || table.communityCards.length === 0) {
+        // In pre-flop with no community cards, should not get here unless error
+        logger.warn('[HandEvaluator] Attempted to evaluate hands with no community cards');
+        return {
+          winnerIds: activePlayers.map(p => p.id),
           winningHands: []
         };
       }

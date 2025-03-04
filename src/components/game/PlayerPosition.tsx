@@ -43,6 +43,9 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
   const currentHandIdRef = useRef(table.handId || '');
   const lastCardLoadTimeRef = useRef(0);
   const cardLoadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Add a new ref to track if we've successfully loaded cards for this hand
+  const hasLoadedCardsForHandRef = useRef(false);
+  const clearCardsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Determine card size based on mobile state
   const cardSize = isMobile ? 'sm' : 'md';
@@ -54,6 +57,9 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
       // Clear any pending timeouts when component unmounts
       if (cardLoadTimeoutRef.current) {
         clearTimeout(cardLoadTimeoutRef.current);
+      }
+      if (clearCardsTimeoutRef.current) {
+        clearTimeout(clearCardsTimeoutRef.current);
       }
     };
   }, []);
@@ -160,8 +166,9 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
       return;
     }
 
-    // Check if we're in a valid state to load cards
-    if (!table.isHandInProgress && !isValidGamePhase) {
+    // SOLUTION 1 & 5: Make the condition less strict, allowing card loading even during brief state transitions
+    // Only skip if we're certain we're not in a valid game state AND we've retried multiple times
+    if (!table.isHandInProgress && !isValidGamePhase && retryCount.current >= 2) {
       logger.log('[PlayerPosition] Skipping card load - no hand in progress and invalid game phase:', {
         requestId,
         playerId: player.id,
@@ -186,6 +193,11 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
       });
       setIsLoadingCards(false);
       return;
+    }
+
+    // SOLUTION 5: Show optimistic UI for cards even if we don't have them yet
+    if (table.isHandInProgress && isValidGamePhase) {
+      setShowCards(true);
     }
 
     try {
@@ -330,6 +342,7 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
       if (mounted.current) {
         setHoleCards(cards);
         setShowCards(true); // Always show cards for the authenticated player
+        hasLoadedCardsForHandRef.current = true; // Mark that we've successfully loaded cards
         retryCount.current = 0;
         setIsLoadingCards(false);
       }
@@ -452,30 +465,50 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
         timestamp: new Date().toISOString(),
       });
       
-      // Clear cards when a new hand starts
-      setHoleCards([]);
-      setShowCards(false);
-      setCardLoadError(null);
-      retryCount.current = 0;
-      
-      // Update the current hand ID
+      // SOLUTION 1: Don't immediately clear cards - add a short delay
+      // Update the current hand ID immediately
       currentHandIdRef.current = table.handId;
+      hasLoadedCardsForHandRef.current = false;
       
-      // If this is the authenticated player and we're in preflop, load cards
-      const isDirectlyAuthenticated = user && user.uid === player.id;
-      if ((isDirectlyAuthenticated || isAuthenticatedPlayer) && 
-          table.phase === 'preflop' && table.isHandInProgress) {
-        logger.log('[PlayerPosition] New hand detected in preflop, loading cards:', {
-          playerId: player.id,
-          handId: table.handId,
-          phase: table.phase,
-          timestamp: new Date().toISOString(),
-        });
-        // Force load cards immediately when a new hand starts
-        debouncedLoadCards(true);
+      // Clear any existing timeout
+      if (clearCardsTimeoutRef.current) {
+        clearTimeout(clearCardsTimeoutRef.current);
       }
+      
+      // Set a timeout to clear cards after a short delay
+      clearCardsTimeoutRef.current = setTimeout(() => {
+        // Only clear if we're still mounted and the handId hasn't changed again
+        if (mounted.current && currentHandIdRef.current === table.handId) {
+          setHoleCards([]);
+          setShowCards(false);
+          setCardLoadError(null);
+          retryCount.current = 0;
+          
+          // If this is the authenticated player and we're in preflop, load cards
+          const isDirectlyAuthenticated = user && user.uid === player.id;
+          if ((isDirectlyAuthenticated || isAuthenticatedPlayer) && 
+              table.phase === 'preflop' && table.isHandInProgress) {
+            logger.log('[PlayerPosition] New hand detected in preflop, loading cards:', {
+              playerId: player.id,
+              handId: table.handId,
+              phase: table.phase,
+              timestamp: new Date().toISOString(),
+            });
+            // Force load cards immediately when a new hand starts
+            debouncedLoadCards(true);
+          }
+        }
+      }, 300); // 300ms delay to let the state stabilize
     }
   }, [table.handId, player.id, table.phase, table.isHandInProgress, user, isAuthenticatedPlayer, debouncedLoadCards]);
+
+  // SOLUTION 5: Add an effect to implement optimistic UI for card display
+  useEffect(() => {
+    if (table.isHandInProgress && isAuthenticatedPlayer && holeCards.length === 0 && !cardLoadError) {
+      // Show face-down cards optimistically while waiting for real cards to load
+      setShowCards(true);
+    }
+  }, [table.isHandInProgress, isAuthenticatedPlayer, holeCards.length, cardLoadError]);
 
   // Combined effect to handle phase changes and clear cards when needed
   useEffect(() => {
@@ -616,11 +649,16 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
 
   // Render player's hole cards
   const renderHoleCards = () => {
+    // SOLUTION 5: Modify the loading state to show face-down cards with animation
     if (isLoadingCards) {
       return (
         <div className="flex gap-1 items-center justify-center">
-          <div className="animate-pulse bg-gray-300/20 rounded-lg w-10 h-16 sm:w-14 sm:h-20"></div>
-          <div className="animate-pulse bg-gray-300/20 rounded-lg w-10 h-16 sm:w-14 sm:h-20 animate-delay-200"></div>
+          <div className="transform rotate-[-5deg] animate-pulse">
+            <CardComponent card={{ suit: 'spades', rank: 'A' }} faceDown size={cardSize} />
+          </div>
+          <div className="transform rotate-[5deg] animate-pulse">
+            <CardComponent card={{ suit: 'spades', rank: 'A' }} faceDown size={cardSize} />
+          </div>
         </div>
       );
     }
@@ -634,6 +672,8 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
     }
 
     if (showCards && holeCards.length === 2) {
+      // Mark that we've successfully loaded cards for this hand
+      hasLoadedCardsForHandRef.current = true;
       return (
         <div className="flex gap-1 items-center justify-center">
           <div className="transform rotate-[-5deg]">
@@ -649,7 +689,7 @@ export const PlayerPosition: React.FC<PlayerPositionProps> = ({
     // Default: face down cards or no cards
     return (
       <div className="flex gap-1 items-center justify-center">
-        {table.isHandInProgress && !player.hasFolded ? (
+        {(table.isHandInProgress && !player.hasFolded) || (isAuthenticatedPlayer && showCards) ? (
           <>
             <div className="transform rotate-[-5deg]">
               <CardComponent card={{ suit: 'spades', rank: 'A' }} faceDown size={cardSize} />

@@ -72,9 +72,9 @@ export class TableService {
       communityCards: [],
       pot: 0,
       currentBet: 0,
-      dealerPosition: -1,
-      phase: 'waiting',
-      currentPlayerIndex: -1,
+      dealerPosition: 0,
+      phase: 'preflop',
+      currentPlayerIndex: 0,
       smallBlind: 10,
       bigBlind: 20,
       lastActionTimestamp: Date.now(),
@@ -89,17 +89,18 @@ export class TableService {
       lastBettor: null,
       isPrivate: false,
       password: null,
-      gameStarted: false,
-      handId: ''
+      gameStarted: false
     };
 
     await set(this.tableRef, initialTable);
     
     try {
+      // Create the table chat room
       await this.gameChatConnector.ensureTableChatRoom(initialTable);
       logger.log('[TableService] Table and chat room created:', { tableId });
     } catch (error) {
       logger.error('[TableService] Error creating table chat room:', { tableId, error });
+      // Don't throw here - we want the table to be created even if chat room creation fails
     }
   }
 
