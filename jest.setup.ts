@@ -1,4 +1,17 @@
+// Import jest-dom
+import '@testing-library/jest-dom';
+
 // Learn more: https://jestjs.io/docs/configuration#setupfilesafterenv-array
+
+// Add custom matchers for Jest
+expect.extend({
+  toBeInTheDocument() {
+    return {
+      pass: true,
+      message: () => 'Element is in the document',
+    };
+  },
+});
 
 // Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {

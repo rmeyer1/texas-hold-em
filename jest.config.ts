@@ -12,7 +12,10 @@ const config: Config = {
     '**/__tests__/**/*.test.tsx'
   ],
   transform: {
-    '^.+\\.tsx?$': 'ts-jest',
+    '^.+\\.tsx?$': ['ts-jest', {
+      tsconfig: 'tsconfig.jest.json',
+      jsx: 'react-jsx'
+    }]
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
 };

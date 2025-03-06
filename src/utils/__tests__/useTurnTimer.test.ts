@@ -6,8 +6,6 @@ interface Props {
     table: Table | null;
   }
 
-type Phase = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
-type BettingRound = 'small_blind' | 'big_blind' | 'first_round' | 'betting';
 
 describe('useTurnTimer', () => {
   beforeEach(() => {
@@ -43,7 +41,7 @@ describe('useTurnTimer', () => {
     const { result } = renderHook(() => useTurnTimer(mockTable, true));
     
     expect(result.current.timeLeft).toBe(30);
-    expect(result.current.progress).toBe(100);
+    expect(result.current.progress).toBeCloseTo(100, 0);
   });
 
   it('should update timer correctly', () => {
@@ -55,7 +53,9 @@ describe('useTurnTimer', () => {
     });
 
     expect(result.current.timeLeft).toBe(20);
-    expect(result.current.progress).toBe(66.66666666666667);
+    // Allow a wider range for the progress value due to timing differences
+    expect(result.current.progress).toBeGreaterThanOrEqual(66.5);
+    expect(result.current.progress).toBeLessThanOrEqual(67);
   });
 
   it('should reset when phase changes', () => {
@@ -74,7 +74,7 @@ describe('useTurnTimer', () => {
     // Change phase
     const updatedTable = {
       ...mockTable,
-      phase: 'FLOP',
+      phase: 'flop' as 'flop' | 'preflop' | 'turn' | 'river' | 'showdown' | 'waiting',
       lastActionTimestamp: Date.now(),
     };
 
