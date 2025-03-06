@@ -23,6 +23,10 @@
         "./src/*"
       ]
     },
+    "typeRoots": [
+      "./node_modules/@types",
+      "./src/types"
+    ],
     "plugins": [
       {
         "name": "next"
@@ -33,7 +37,8 @@
     "**/*.ts",
     "**/*.tsx",
     "next-env.d.ts",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    "global.d.ts"
   ],
   "exclude": [
     "node_modules"
