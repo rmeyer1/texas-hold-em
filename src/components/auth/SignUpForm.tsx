@@ -1,7 +1,7 @@
 'use client';
 import React from 'react';
 import { useState, type FormEvent } from 'react';
-import { signUpWithEmail } from '@/services/firebase';
+import { signUpWithEmail } from '@/services/auth';
 import { useRouter } from 'next/navigation';
 
 interface SignUpFormProps {}
