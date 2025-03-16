@@ -1,50 +1,70 @@
 import { LRUCache } from 'lru-cache';
+import logger from '@/utils/logger';
 
-export interface CacheEntry<T> {
-  data: T;
-  timestamp: number;
+// Cache options
+const options = {
+  max: 1000, // Maximum number of items to store
+  ttl: 1000 * 60 * 5, // 5 minutes TTL
+  updateAgeOnGet: true, // Reset TTL when item is accessed
+  allowStale: false // Don't serve stale items
+};
+
+// Create the cache instance
+const cache = new LRUCache<string, { data: any; timestamp: number }>(options);
+
+/**
+ * Get data from cache
+ */
+export function getCachedData(key: string) {
+  try {
+    const cached = cache.get(key);
+    if (cached) {
+      logger.log('[Cache] Hit:', { key, timestamp: new Date().toISOString() });
+      return cached;
+    }
+    logger.log('[Cache] Miss:', { key, timestamp: new Date().toISOString() });
+    return null;
+  } catch (error) {
+    logger.error('[Cache] Error getting data:', {
+      key,
+      error,
+      timestamp: new Date().toISOString()
+    });
+    return null;
+  }
 }
 
-export interface CacheOptions {
-  max?: number;
-  ttl?: number;
-}
-
-class Cache {
-  private cache: LRUCache<string, CacheEntry<unknown>>;
-
-  constructor(options: CacheOptions = {}) {
-    this.cache = new LRUCache<string, CacheEntry<unknown>>({
-      max: options.max || 1000, // Default to 1000 items
-      ttl: options.ttl || 1000 * 60 * 5, // Default to 5 minutes
+/**
+ * Set data in cache
+ */
+export function setCachedData(key: string, data: any) {
+  try {
+    cache.set(key, { data, timestamp: Date.now() });
+    logger.log('[Cache] Set:', { key, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('[Cache] Error setting data:', {
+      key,
+      error,
+      timestamp: new Date().toISOString()
     });
   }
+}
 
-  get<T>(key: string): CacheEntry<T> | undefined {
-    return this.cache.get(key) as CacheEntry<T> | undefined;
-  }
-
-  set<T>(key: string, data: T): void {
-    this.cache.set(key, {
-      data,
-      timestamp: Date.now(),
+/**
+ * Invalidate cache entry
+ */
+export function invalidateCache(key: string) {
+  try {
+    cache.delete(key);
+    logger.log('[Cache] Invalidated:', { key, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('[Cache] Error invalidating data:', {
+      key,
+      error,
+      timestamp: new Date().toISOString()
     });
-  }
-
-  delete(key: string): void {
-    this.cache.delete(key);
-  }
-
-  clear(): void {
-    this.cache.clear();
-  }
-
-  has(key: string): boolean {
-    return this.cache.has(key);
   }
 }
 
-// Create a default cache instance with default options
-const defaultCache = new Cache();
-
-export { Cache, defaultCache as cache }; 
+// Export the cache instance for direct access if needed
+export { cache }; 
