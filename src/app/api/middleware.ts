@@ -1,7 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { getAuth } from 'firebase-admin/auth';
 import { type DecodedIdToken } from 'firebase-admin/auth';
-import '../../../services/firebase-admin'; // Initialize Firebase Admin
+import '@/services/firebase-admin'; // Initialize Firebase Admin
+import { LRUCache } from 'lru-cache';
+import logger from '@/utils/logger';
 
 export interface AuthenticatedRequest extends NextRequest {
   user: DecodedIdToken;
@@ -18,37 +20,75 @@ export class AuthError extends Error {
   }
 }
 
-export async function authMiddleware(
-  req: NextRequest
-): Promise<NextResponse | null> {
+// Rate limiting cache
+const rateLimitCache = new LRUCache<string, number>({
+  max: 10000, // Maximum number of users to track
+  ttl: 60000, // Reset counts every minute
+});
+
+const MAX_REQUESTS_PER_MINUTE = 300; // 5 requests per second
+
+/**
+ * Check authentication using Firebase Admin SDK
+ */
+export async function authMiddleware(req: NextRequest): Promise<NextResponse | null> {
+  const token = req.headers.get('Authorization')?.replace('Bearer ', '');
+  
+  if (!token) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
-    const token = req.headers.get('Authorization')?.replace('Bearer ', '');
-
-    if (!token) {
-      throw new AuthError('No authentication token provided');
-    }
-
-    try {
-      const decodedToken = await getAuth().verifyIdToken(token);
-      (req as AuthenticatedRequest).user = decodedToken;
-      return null; // Proceed to the next middleware/handler
-    } catch (error) {
-      throw new AuthError('Invalid authentication token');
-    }
+    await getAuth().verifyIdToken(token);
+    return null; // Authentication successful
   } catch (error) {
-    if (error instanceof AuthError) {
+    logger.error('[Auth] Invalid token:', {
+      error,
+      timestamp: new Date().toISOString()
+    });
+    return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+  }
+}
+
+/**
+ * Check rate limiting
+ */
+export async function rateLimitMiddleware(req: NextRequest): Promise<NextResponse | null> {
+  const token = req.headers.get('Authorization')?.replace('Bearer ', '');
+  let userId: string;
+
+  try {
+    if (token) {
+      const decodedToken = await getAuth().verifyIdToken(token);
+      userId = decodedToken.uid;
+    } else {
+      // Use forwarded IP or direct IP for non-authenticated requests
+      const forwardedFor = req.headers.get('x-forwarded-for')?.split(',')[0];
+      userId = forwardedFor || req.headers.get('x-real-ip') || 'unknown';
+    }
+
+    const currentCount = (rateLimitCache.get(userId) || 0) + 1;
+    rateLimitCache.set(userId, currentCount);
+
+    if (currentCount > MAX_REQUESTS_PER_MINUTE) {
+      logger.warn('[RateLimit] Limit exceeded:', {
+        userId,
+        count: currentCount,
+        timestamp: new Date().toISOString()
+      });
       return NextResponse.json(
-        { error: { message: error.message, code: error.code } },
-        { status: error.status }
+        { error: 'Too many requests' },
+        { status: 429 }
       );
     }
 
-    // Handle unexpected errors
-    console.error('Authentication error:', error);
-    return NextResponse.json(
-      { error: { message: 'Internal server error', code: 'auth/internal-error' } },
-      { status: 500 }
-    );
+    return null; // Rate limit not exceeded
+  } catch (error) {
+    logger.error('[RateLimit] Error:', {
+      error,
+      timestamp: new Date().toISOString()
+    });
+    return null; // Allow request on error
   }
 }
 

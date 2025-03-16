@@ -1,5 +1,49 @@
+// Mock Firebase Admin first, before any imports
+jest.mock('firebase-admin/app', () => ({
+  initializeApp: jest.fn().mockReturnValue({}),
+  cert: jest.fn().mockReturnValue({}),
+  getApps: jest.fn().mockReturnValue([]),
+  getApp: jest.fn().mockReturnValue({}),
+}));
+
+jest.mock('firebase-admin/database', () => ({
+  getDatabase: jest.fn().mockReturnValue({
+    ref: jest.fn().mockReturnValue({
+      once: jest.fn().mockResolvedValue({
+        val: jest.fn().mockReturnValue(null)
+      })
+    })
+  })
+}));
+
+jest.mock('firebase-admin/auth', () => ({
+  getAuth: jest.fn().mockReturnValue({
+    verifyIdToken: jest.fn().mockResolvedValue({ uid: 'test-user' })
+  })
+}));
+
 // Import jest-dom
 import '@testing-library/jest-dom';
+import { fetch, Headers, Request, Response } from 'cross-fetch';
+
+// Mock environment variables
+process.env.FIREBASE_PROJECT_ID = 'test-project';
+process.env.FIREBASE_CLIENT_EMAIL = 'test@test.com';
+process.env.FIREBASE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC9QFi8Bd/3V8Nx\n5lPXjD4Vj0TvXsphV+Xjt0Qv6RDGjE5Eg5+oWwz9wOmXtxwUAcdrxBE3/2QKZ5YB\nxXS1Vcx+zBBWs1aGPR8S27xd8mXAmGFPqWYVOXQzPV1XQA/KZFzYAaqqFMcXz5Fq\nIPQ5B5xgHmoYWpxBTwF/IhLXgQMGh2hVhvxoGAp5D2nk9KQyQxm7TJ3lh0oPFIvv\n-----END PRIVATE KEY-----\n';
+process.env.FIREBASE_DATABASE_URL = 'https://test-project.firebaseio.com';
+
+// Add fetch and related APIs to global scope
+global.fetch = fetch;
+global.Headers = Headers;
+global.Request = Request;
+global.Response = Response;
+
+// Add TextEncoder/TextDecoder to global scope if not present
+if (typeof global.TextEncoder === 'undefined') {
+  const { TextEncoder, TextDecoder } = require('util');
+  global.TextEncoder = TextEncoder;
+  global.TextDecoder = TextDecoder;
+}
 
 // Learn more: https://jestjs.io/docs/configuration#setupfilesafterenv-array
 
@@ -48,7 +92,78 @@ jest.mock('firebase/database', () => ({
   off: jest.fn(),
 }));
 
+// Mock Firebase Admin
+jest.mock('firebase-admin', () => {
+  const mockApp = {
+    auth: jest.fn(),
+    database: jest.fn().mockReturnValue({
+      ref: jest.fn().mockReturnValue({
+        once: jest.fn().mockResolvedValue({
+          val: jest.fn().mockReturnValue(null)
+        })
+      })
+    }),
+  };
+
+  return {
+    initializeApp: jest.fn().mockReturnValue(mockApp),
+    credential: {
+      cert: jest.fn().mockReturnValue({
+        getAccessToken: jest.fn().mockResolvedValue({ access_token: 'mock-token' })
+      })
+    },
+    getApps: jest.fn().mockReturnValue([]),
+    getApp: jest.fn().mockReturnValue(mockApp),
+  };
+});
+
+// Mock Firebase Admin Auth
+jest.mock('firebase-admin/auth', () => ({
+  getAuth: jest.fn().mockReturnValue({
+    verifyIdToken: jest.fn().mockResolvedValue({ uid: 'test-user' }),
+  }),
+}));
+
 // Reset all mocks after each test
 afterEach(() => {
   jest.clearAllMocks();
-}); 
+});
+
+// Mock middleware
+jest.mock('@/app/api/middleware', () => ({
+  authMiddleware: jest.fn().mockResolvedValue(null),
+  rateLimitMiddleware: jest.fn().mockResolvedValue(null)
+}));
+
+// Mock database service
+jest.mock('@/services/databaseService', () => {
+  class MockDatabaseService {
+    getTable = jest.fn();
+  }
+  return { DatabaseService: MockDatabaseService };
+});
+
+// Mock game manager
+jest.mock('@/services/gameManager', () => {
+  class MockGameManager {
+    getPlayerHoleCards = jest.fn();
+  }
+  return { GameManager: MockGameManager };
+});
+
+// Mock cache utils
+jest.mock('@/utils/cache', () => ({
+  getCachedData: jest.fn(),
+  setCachedData: jest.fn()
+}));
+
+// Mock logger
+jest.mock('@/utils/logger', () => ({
+  log: jest.fn(),
+  error: jest.fn(),
+  __esModule: true,
+  default: {
+    log: jest.fn(),
+    error: jest.fn()
+  }
+})); 
