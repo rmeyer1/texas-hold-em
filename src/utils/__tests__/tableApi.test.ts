@@ -1,45 +1,29 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { GET } from '@/app/api/tables/[id]/route';
 import { GameManager } from '@/services/gameManager';
 import { DatabaseService } from '@/services/databaseService';
 import { getAuth } from 'firebase-admin/auth';
 import { getCachedData, setCachedData } from '@/utils/cache';
 import { Card, Suit } from '@/types/poker';
+import { rateLimitMiddleware } from '@/app/api/middleware';
 
 // Mock Next.js Request and Response
-const mockNextRequest = {
-  headers: new Headers()
-};
-
-const mockNextResponse = {
-  json: jest.fn()
-};
-
 jest.mock('next/server', () => ({
   NextRequest: jest.fn().mockImplementation((url, init) => {
     const headers = new Headers(init?.headers || {});
     return {
-      headers: {
-        get: (name: string) => headers.get(name),
-        set: (name: string, value: string) => headers.set(name, value),
-        append: (name: string, value: string) => headers.append(name, value),
-        delete: (name: string) => headers.delete(name),
-      },
+      headers,
       url,
       ...init
     };
   }),
   NextResponse: {
-    json: jest.fn().mockImplementation((body, init) => {
-      const response = {
-        ...mockNextResponse,
-        json: async () => body,
-        status: init?.status || 200,
-        headers: new Map(),
-        ok: init?.status ? init.status >= 200 && init.status < 300 : true
-      };
-      return response;
-    })
+    json: jest.fn().mockImplementation((body, init) => ({
+      json: async () => body,
+      status: init?.status || 200,
+      headers: new Map(),
+      ok: init?.status ? init.status >= 200 && init.status < 300 : true
+    }))
   }
 }));
 
@@ -53,12 +37,26 @@ jest.mock('@/services/databaseService', () => ({
 }));
 
 jest.mock('@/app/api/middleware', () => ({
-  authMiddleware: jest.fn().mockResolvedValue(null),
-  rateLimitMiddleware: jest.fn().mockResolvedValue(null)
-}));
+    authMiddleware: jest.fn().mockImplementation(async (req) => {
+      const token = req.headers.get('Authorization');
+      if (!token) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      try {
+        await getAuth().verifyIdToken(token.replace('Bearer ', ''));
+        return null;
+      } catch (error) {
+        return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+      }
+    }),
+    rateLimitMiddleware: jest.fn().mockResolvedValue(null)
+  }));
 
 jest.mock('firebase-admin/auth');
-jest.mock('@/utils/cache');
+jest.mock('@/utils/cache', () => ({
+  getCachedData: jest.fn(),
+  setCachedData: jest.fn()
+}));
 jest.mock('@/utils/logger');
 
 describe('Table Read API', () => {
@@ -83,12 +81,8 @@ describe('Table Read API', () => {
   const mockUserId = 'test-user';
 
   beforeEach(() => {
-    // Reset all mocks
     jest.clearAllMocks();
-
-    // Reset Next.js mocks
-    mockNextRequest.headers = new Headers();
-    mockNextResponse.json.mockReset();
+    (getCachedData as jest.Mock).mockReturnValue(null);
 
     // Mock auth
     (getAuth as jest.Mock).mockReturnValue({
@@ -126,17 +120,15 @@ describe('Table Read API', () => {
       tableId,
       getPlayerHoleCards: jest.fn().mockResolvedValue(mockHoleCards),
     }));
-
-    // Mock cache
-    (getCachedData as jest.Mock).mockReturnValue(null);
-    (setCachedData as jest.Mock).mockImplementation(() => {});
   });
 
   it('should return table data for valid ID', async () => {
+    const headers = new Headers({
+      'Authorization': `Bearer ${mockToken}`
+    });
+
     const req = new NextRequest('http://localhost/api/tables/test-table', {
-      headers: {
-        'Authorization': `Bearer ${mockToken}`
-      }
+      headers
     });
 
     const response = await GET(req, { params: { id: 'test-table' } });
@@ -154,8 +146,12 @@ describe('Table Read API', () => {
     const cachedTable = { ...mockTable, fromCache: true };
     (getCachedData as jest.Mock).mockReturnValue({ data: cachedTable });
 
+    const headers = new Headers({
+        'Authorization': `Bearer ${mockToken}`
+      });
+
     const req = new NextRequest('http://localhost/api/tables/test-table', {
-      headers: { Authorization: `Bearer ${mockToken}` }
+      headers
     });
 
     const response = await GET(req, { params: { id: 'test-table' } });
@@ -196,8 +192,11 @@ describe('Table Read API', () => {
       } as unknown as DatabaseService;
     });
 
+    const headers = new Headers({
+        'Authorization': `Bearer ${mockToken}`
+      });
     const req = new NextRequest('http://localhost/api/tables/non-existent', {
-      headers: { Authorization: `Bearer ${mockToken}` }
+     headers
     });
 
     const response = await GET(req, { params: { id: 'non-existent' } });
@@ -222,9 +221,12 @@ describe('Table Read API', () => {
     (getAuth as jest.Mock).mockReturnValue({
       verifyIdToken: jest.fn().mockRejectedValue(new Error('Invalid token'))
     });
+    const headers = new Headers({
+        'Authorization': `Bearer ${mockToken}`
+      });
 
     const req = new NextRequest('http://localhost/api/tables/test-table', {
-      headers: { Authorization: 'Bearer invalid-token' }
+        headers
     });
 
     const response = await GET(req, { params: { id: 'test-table' } });
@@ -248,8 +250,12 @@ describe('Table Read API', () => {
       } as unknown as GameManager;
     });
 
+    const headers = new Headers({
+        'Authorization': `Bearer ${mockToken}`
+      });
+
     const req = new NextRequest('http://localhost/api/tables/test-table', {
-      headers: { Authorization: `Bearer ${mockToken}` }
+        headers
     });
 
     const response = await GET(req, { params: { id: 'test-table' } });
@@ -264,58 +270,42 @@ describe('Table Read API', () => {
   });
 
   it('should cache table data after fetching', async () => {
+        const headers = new Headers({
+        'Authorization': `Bearer ${mockToken}`
+      });
     const req = new NextRequest('http://localhost/api/tables/test-table', {
-      headers: { Authorization: `Bearer ${mockToken}` }
+     headers
     });
 
     await GET(req, { params: { id: 'test-table' } });
 
-    expect(setCachedData).toHaveBeenCalledWith(
-      'table:test-table',
-      mockTable
-    );
+    expect(setCachedData).toHaveBeenCalledTimes(1);
+    expect(setCachedData).toHaveBeenCalledWith('table:test-table', mockTable);
   });
 
   it('should handle rate limiting', async () => {
     // Make multiple requests in quick succession
+    const headers = new Headers({
+      'Authorization': `Bearer ${mockToken}`
+    });
+    
     const req = new NextRequest('http://localhost/api/tables/test-table', {
-      headers: { Authorization: `Bearer ${mockToken}` }
+      headers
     });
 
     // First request should succeed
+    jest.mocked(rateLimitMiddleware).mockResolvedValueOnce(null);
     const response1 = await GET(req, { params: { id: 'test-table' } });
     expect(response1.status).toBe(200);
 
-    // Mock rate limit exceeded
-    let requestCount = 0;
-    const mockGetPlayerHoleCards = jest.fn().mockImplementation(() => {
-      requestCount++;
-      if (requestCount > 5) {
-        throw new Error('Rate limit exceeded');
-      }
-      return Promise.resolve(mockHoleCards);
-    });
-
-    jest.mocked(GameManager).mockImplementation((tableId: string) => {
-      return {
-        db: {},
-        deck: [],
-        players: [],
-        phases: [],
-        tableId,
-        getPlayerHoleCards: mockGetPlayerHoleCards,
-        // Add other required methods
-      } as unknown as GameManager;
-    });
-
-    // Subsequent request should be rate limited
+    // Second request should be rate limited
+    jest.mocked(rateLimitMiddleware).mockResolvedValueOnce(
+      NextResponse.json({ error: 'Too many requests' }, { status: 429 })
+    );
     const response2 = await GET(req, { params: { id: 'test-table' } });
     const data2 = await response2.json();
 
-    expect(response2.status).toBe(200); // Still 200 because we're gracefully handling the error
-    expect(data2).toEqual({
-      ...mockTable,
-      timestamp: expect.any(Number)
-    });
+    expect(response2.status).toBe(429);
+    expect(data2).toEqual({ error: 'Too many requests' });
   });
 }); 
