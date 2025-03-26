@@ -8,7 +8,7 @@ import logger from '@/utils/logger';
 
 export async function GET(
   request: NextRequest,
-  context: { params: { id: string } }
+  { params }: { params: { id: string } }
 ) {
   try {
     // Check authentication
@@ -20,17 +20,17 @@ export async function GET(
     if (rateLimitError) return rateLimitError;
 
     // Try to get cached data first
-    const cacheKey = `table:${context.params.id}`;
+    const cacheKey = `table:${params.id}`;
     const cached = getCachedData(cacheKey);
     
     if (cached) {
-      logger.log('[TableAPI] Cache hit for table:', context.params.id);
+      logger.log('[TableAPI] Cache hit for table:', params.id);
       
       // If we have a token, append hole cards
       const token = request.headers.get('Authorization')?.replace('Bearer ', '');
       if (token) {
         const decodedToken = await getAuth().verifyIdToken(token);
-        const gameManager = new GameManager(context.params.id);
+        const gameManager = new GameManager(params.id);
         const holeCards = await gameManager.getPlayerHoleCards(decodedToken.uid);
         if (holeCards) {
           return NextResponse.json({ 
@@ -50,7 +50,7 @@ export async function GET(
     }
 
     // No cache hit, get fresh data
-    const db = new DatabaseService(context.params.id);
+    const db = new DatabaseService(params.id);
     const table = await db.getTable();
     
     if (!table) {
@@ -64,7 +64,7 @@ export async function GET(
     const token = request.headers.get('Authorization')?.replace('Bearer ', '');
     if (token) {
       const decodedToken = await getAuth().verifyIdToken(token);
-      const gameManager = new GameManager(context.params.id);
+      const gameManager = new GameManager(params.id);
       const holeCards = await gameManager.getPlayerHoleCards(decodedToken.uid);
       if (holeCards) {
         return NextResponse.json({ 
@@ -82,7 +82,7 @@ export async function GET(
 
   } catch (error: any) {
     logger.error('[TableAPI] Error fetching table:', {
-        tableId: context.params.id,
+        tableId: params.id,
         error: error.toString(),
         timestamp: new Date().toISOString()
       });
