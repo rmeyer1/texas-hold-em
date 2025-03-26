@@ -17,6 +17,12 @@ const config: Config = {
       jsx: 'react-jsx'
     }]
   },
+  transformIgnorePatterns: [
+    '/node_modules/(?!(jose|firebase-admin|@firebase)/)'
+  ],
+  testEnvironmentOptions: {
+    customExportConditions: ['node', 'node-addons']
+  },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
 };
 

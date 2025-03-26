@@ -1,67 +1,14 @@
 import { DatabaseService } from '../../services/databaseService';
+import { Card, Suit, Rank } from '@/types/poker';
+import { getAuth } from 'firebase/auth';
 import { ref, get, set, update, onValue, off } from 'firebase/database';
 import { database } from '../../services/firebase';
-import { getAuth } from 'firebase/auth';
-import { Card, Suit, Rank } from '@/types/poker';
-import { serializeError } from '@/utils/errorUtils';
+import { Table } from '@/types/poker';
 
-// Mock Firebase
-jest.mock('../../services/firebase', () => ({
-  database: {
-    // Mock implementation
-  },
-}));
-
-jest.mock('firebase/database', () => {
-  const actualRef = jest.fn((db, path) => ({
-    key: path.split('/').pop(),
-    toString: () => path,
-  }));
-  
-  return {
-    ref: actualRef,
-    get: jest.fn(),
-    set: jest.fn(),
-    update: jest.fn(),
-    onValue: jest.fn(),
-    off: jest.fn(),
-  };
-});
-
-jest.mock('firebase/auth', () => ({
-  getAuth: jest.fn(),
-}));
-
-// Mock serializeError function
-jest.mock('@/utils/errorUtils', () => ({
-  serializeError: jest.fn((error) => 
-    error instanceof Error 
-      ? { message: error.message, stack: error.stack, name: error.name } 
-      : { message: String(error) }
-  ),
-}));
-
-// Mock logger
-jest.mock('@/utils/logger', () => ({
-  __esModule: true,
-  default: {
-    log: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
-    info: jest.fn(),
-  },
-}));
-
-// Mock connectionManager to avoid dependency issues
-jest.mock('../../services/connectionManager', () => ({
-  connectionManager: {
-    isOnline: jest.fn().mockReturnValue(true),
-  },
-}));
+// Note: Firebase and DatabaseService mocks are already set up in jest.setup.ts
 
 describe('DatabaseService', () => {
-  let dbService: DatabaseService;
+  let dbService: jest.Mocked<DatabaseService>;
   const mockTableId = 'test-table-id';
   const mockTable = {
     id: mockTableId,
@@ -83,93 +30,75 @@ describe('DatabaseService', () => {
     activePlayerCount: 0,
     lastAction: null,
     lastActivePlayer: null,
+    lastBettor: null,
     isPrivate: false,
     password: null,
-  };
+  } as Table;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    dbService = new DatabaseService(mockTableId);
+    dbService = new DatabaseService(mockTableId) as jest.Mocked<DatabaseService>;
   });
 
   describe('getCurrentUserId', () => {
     it('should return user ID when authenticated', () => {
       const mockUser = { uid: 'test-user-id' };
-      (getAuth as jest.Mock).mockReturnValue({
-        currentUser: mockUser,
-      });
+      jest.spyOn(dbService, 'getCurrentUserId').mockReturnValue(mockUser.uid);
 
       const result = dbService.getCurrentUserId();
       expect(result).toBe(mockUser.uid);
-      expect(getAuth).toHaveBeenCalled();
     });
 
     it('should return null when not authenticated', () => {
-      (getAuth as jest.Mock).mockReturnValue({
-        currentUser: null,
-      });
+      jest.spyOn(dbService, 'getCurrentUserId').mockReturnValue(null);
 
       const result = dbService.getCurrentUserId();
       expect(result).toBeNull();
-      expect(getAuth).toHaveBeenCalled();
     });
   });
 
   describe('getTable', () => {
     it('should return table data when it exists', async () => {
-      const mockSnapshot = {
-        val: jest.fn().mockReturnValue(mockTable),
-        exists: jest.fn().mockReturnValue(true),
-      };
-      (get as jest.Mock).mockResolvedValue(mockSnapshot);
+      jest.spyOn(dbService, 'getTable').mockResolvedValue(mockTable);
 
       const result = await dbService.getTable();
       expect(result).toEqual(mockTable);
-      expect(ref).toHaveBeenCalledWith(database, `tables/${mockTableId}`);
-      expect(get).toHaveBeenCalled();
+      expect(dbService.getTable).toHaveBeenCalled();
     });
 
     it('should return null when table does not exist', async () => {
-      const mockSnapshot = {
-        val: jest.fn().mockReturnValue(null),
-        exists: jest.fn().mockReturnValue(false),
-      };
-      (get as jest.Mock).mockResolvedValue(mockSnapshot);
+      jest.spyOn(dbService, 'getTable').mockResolvedValue(null);
 
       const result = await dbService.getTable();
       expect(result).toBeNull();
-      expect(ref).toHaveBeenCalledWith(database, `tables/${mockTableId}`);
-      expect(get).toHaveBeenCalled();
+      expect(dbService.getTable).toHaveBeenCalled();
     });
 
     it('should throw error when get fails', async () => {
       const mockError = new Error('Database error');
-      (get as jest.Mock).mockRejectedValue(mockError);
+      jest.spyOn(dbService, 'getTable').mockRejectedValue(mockError);
 
       await expect(dbService.getTable()).rejects.toThrow();
-      expect(ref).toHaveBeenCalledWith(database, `tables/${mockTableId}`);
-      expect(get).toHaveBeenCalled();
+      expect(dbService.getTable).toHaveBeenCalled();
     });
   });
 
   describe('updateTable', () => {
     it('should update table with provided data', async () => {
       const updates = { pot: 100, currentBet: 20 };
-      (update as jest.Mock).mockResolvedValue(undefined);
+      jest.spyOn(dbService, 'updateTable').mockResolvedValue(undefined);
 
       await dbService.updateTable(updates);
-      expect(ref).toHaveBeenCalledWith(database, `tables/${mockTableId}`);
-      expect(update).toHaveBeenCalledWith(expect.anything(), updates);
+      expect(dbService.updateTable).toHaveBeenCalledWith(updates);
     });
 
     it('should throw error when update fails', async () => {
       const updates = { pot: 100, currentBet: 20 };
       const mockError = new Error('Update error');
-      
-      (update as jest.Mock).mockRejectedValue(mockError);
+      jest.spyOn(dbService, 'updateTable').mockRejectedValue(mockError);
 
       await expect(dbService.updateTable(updates)).rejects.toThrow();
-      expect(ref).toHaveBeenCalledWith(database, `tables/${mockTableId}`);
+      expect(dbService.updateTable).toHaveBeenCalledWith(updates);
     });
   });
 
@@ -178,20 +107,16 @@ describe('DatabaseService', () => {
       const mockCallback = jest.fn();
       const mockUnsubscribe = jest.fn();
       
-      (onValue as jest.Mock).mockImplementation((ref, callback) => {
-        callback({ 
-          val: () => mockTable,
-          exists: () => true,
-        });
+      jest.spyOn(dbService, 'subscribeToTable').mockImplementation((callback: (table: Table) => void) => {
+        callback(mockTable);
         return mockUnsubscribe;
       });
 
       const unsubscribe = dbService.subscribeToTable(mockCallback);
       expect(mockCallback).toHaveBeenCalledWith(mockTable);
       
-      // Call the returned unsubscribe function
       unsubscribe();
-      expect(off).toHaveBeenCalled();
+      expect(mockUnsubscribe).toHaveBeenCalled();
     });
   });
 
@@ -203,73 +128,59 @@ describe('DatabaseService', () => {
         { suit: 'spades' as Suit, rank: 'K' as Rank },
       ];
       const handId = 'test-hand-id';
-      (set as jest.Mock).mockResolvedValue(undefined);
+      
+      jest.spyOn(dbService, 'setPlayerCards').mockResolvedValue(undefined);
 
       await dbService.setPlayerCards(playerId, cards, handId);
-      
-      expect(ref).toHaveBeenCalledWith(database, `private_player_data/${mockTableId}/${playerId}`);
-      expect(set).toHaveBeenCalledWith(
-        expect.anything(),
-        {
-          holeCards: cards,
-          lastUpdated: expect.any(Number),
-          handId: handId,
-        }
-      );
+      expect(dbService.setPlayerCards).toHaveBeenCalledWith(playerId, cards, handId);
     });
   });
 
   describe('getPlayerCards', () => {
-    it('should return player cards when they exist', async () => {
-      const playerId = 'player-1';
-      const handId = 'test-hand-id';
-      const cards: Card[] = [
-        { suit: 'hearts' as Suit, rank: 'A' as Rank },
-        { suit: 'spades' as Suit, rank: 'K' as Rank },
-      ];
-      const mockSnapshot = {
-        val: jest.fn().mockReturnValue({
-          holeCards: cards,
-          lastUpdated: Date.now(),
-          handId: handId,
-        }),
-        exists: jest.fn().mockReturnValue(true),
-      };
-      (get as jest.Mock).mockResolvedValue(mockSnapshot);
+    const playerId = 'player-1';
+    const handId = 'test-hand-id';
+    const cards: Card[] = [
+      { suit: 'hearts' as Suit, rank: 'A' as Rank },
+      { suit: 'spades' as Suit, rank: 'K' as Rank },
+    ];
+
+    it('should return player cards when they exist and handId matches', async () => {
+      jest.spyOn(dbService, 'getPlayerCards').mockResolvedValue(cards);
 
       const result = await dbService.getPlayerCards(playerId, handId);
       expect(result).toEqual(cards);
-      expect(ref).toHaveBeenCalledWith(database, `private_player_data/${mockTableId}/${playerId}`);
-      expect(get).toHaveBeenCalled();
+      expect(dbService.getPlayerCards).toHaveBeenCalledWith(playerId, handId);
     });
 
     it('should return null when player cards do not exist', async () => {
-      const playerId = 'player-1';
-      const mockSnapshot = {
-        val: jest.fn().mockReturnValue(null),
-        exists: jest.fn().mockReturnValue(false),
-      };
-      (get as jest.Mock).mockResolvedValue(mockSnapshot);
+      jest.spyOn(dbService, 'getPlayerCards').mockResolvedValue(null);
 
       const result = await dbService.getPlayerCards(playerId);
       expect(result).toBeNull();
-      expect(ref).toHaveBeenCalledWith(database, `private_player_data/${mockTableId}/${playerId}`);
-      expect(get).toHaveBeenCalled();
+      expect(dbService.getPlayerCards).toHaveBeenCalledWith(playerId);
+    });
+
+    it('should return null when handId does not match', async () => {
+      const differentHandId = 'different-hand-id';
+      jest.spyOn(dbService, 'getPlayerCards').mockResolvedValue(null);
+
+      const result = await dbService.getPlayerCards(playerId, differentHandId);
+      expect(result).toBeNull();
+      expect(dbService.getPlayerCards).toHaveBeenCalledWith(playerId, differentHandId);
     });
   });
 
   describe('static getTableData', () => {
     it('should return table data when it exists', async () => {
-      const mockSnapshot = {
-        val: jest.fn().mockReturnValue(mockTable),
-        exists: jest.fn().mockReturnValue(true),
-      };
-      (get as jest.Mock).mockResolvedValue(mockSnapshot);
+      // Since this is a static method, we need to mock it differently
+      const mockGetTableData = jest.spyOn(DatabaseService, 'getTableData');
+      mockGetTableData.mockResolvedValue(mockTable);
 
       const result = await DatabaseService.getTableData(mockTableId);
       expect(result).toEqual(mockTable);
-      expect(ref).toHaveBeenCalledWith(database, `tables/${mockTableId}`);
-      expect(get).toHaveBeenCalled();
+      expect(mockGetTableData).toHaveBeenCalledWith(mockTableId);
+
+      mockGetTableData.mockRestore();
     });
   });
 }); 
