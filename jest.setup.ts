@@ -72,7 +72,7 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 });
 
-// Mock Firebase Database
+// Mock Firebase Database with flexible mocks
 const mockRef = { key: 'test-table-123' };
 const mockDatabase = {
   ref: jest.fn().mockReturnValue(mockRef),
@@ -82,15 +82,19 @@ jest.mock('./src/services/firebase', () => ({
   database: mockDatabase,
 }));
 
-jest.mock('firebase/database', () => ({
-  ref: jest.fn().mockReturnValue(mockRef),
-  set: jest.fn(),
-  update: jest.fn(),
-  get: jest.fn(),
-  runTransaction: jest.fn(),
-  onValue: jest.fn(),
-  off: jest.fn(),
-}));
+jest.mock('firebase/database', () => {
+  const actual = jest.requireActual('firebase/database');
+  return {
+    ...actual,
+    ref: jest.fn().mockReturnValue(mockRef),
+    set: jest.fn(),
+    update: jest.fn(),
+    get: jest.fn(),
+    runTransaction: jest.fn(),
+    onValue: jest.fn(),
+    off: jest.fn(),
+  };
+});
 
 // Mock Firebase Admin
 jest.mock('firebase-admin', () => {
@@ -135,20 +139,26 @@ jest.mock('@/app/api/middleware', () => ({
   rateLimitMiddleware: jest.fn().mockResolvedValue(null)
 }));
 
-// Mock database service
+// Mock database service with basic implementation
 jest.mock('@/services/databaseService', () => {
   class MockDatabaseService {
     getTable = jest.fn();
+    updateTable = jest.fn();
+    forceUpdateTable = jest.fn();
+    createTable = jest.fn().mockResolvedValue('test-table-123');
+    getCurrentUserId = jest.fn();
+    getTableRef = jest.fn();
+    getPrivatePlayerRef = jest.fn();
+    sanitizeData = jest.fn(data => data);
+    setPlayerCards = jest.fn();
+    getPlayerCards = jest.fn();
+    clearPlayerCards = jest.fn();
+    subscribeToTable = jest.fn();
+    addPlayer = jest.fn();
+    updateTableTransaction = jest.fn();
+    static getTableData = jest.fn();
   }
   return { DatabaseService: MockDatabaseService };
-});
-
-// Mock game manager
-jest.mock('@/services/gameManager', () => {
-  class MockGameManager {
-    getPlayerHoleCards = jest.fn();
-  }
-  return { GameManager: MockGameManager };
 });
 
 // Mock cache utils
@@ -161,9 +171,16 @@ jest.mock('@/utils/cache', () => ({
 jest.mock('@/utils/logger', () => ({
   log: jest.fn(),
   error: jest.fn(),
+  warn: jest.fn(),
+  info: jest.fn(),
+  debug: jest.fn(),
   __esModule: true,
   default: {
     log: jest.fn(),
-    error: jest.fn()
+    error: jest.fn(),
+    warn: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn()
   }
 })); 
+

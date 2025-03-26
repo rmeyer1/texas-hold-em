@@ -171,7 +171,7 @@ export class GameManager {
   /**
    * Move to the next player or phase
    */
-  private async moveToNextPlayer(table: Table): Promise<void> {
+  public async moveToNextPlayer(table: Table): Promise<void> {
     try {
       logger.log('[GameManager] moveToNextPlayer starting:', { currentPlayerIndex: table.currentPlayerIndex, phase: table.phase });
       if (!table.roundBets) table.roundBets = {};
