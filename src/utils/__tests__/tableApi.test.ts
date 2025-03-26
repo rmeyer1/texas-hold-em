@@ -27,6 +27,11 @@ jest.mock('next/server', () => ({
   }
 }));
 
+// Helper function to create Promise-based params
+const createParams = (id: string): { params: Promise<{ id: string }> } => ({
+  params: Promise.resolve({ id })
+});
+
 // Mock dependencies
 jest.mock('@/services/gameManager', () => ({
   GameManager: jest.fn()
@@ -131,7 +136,7 @@ describe('Table Read API', () => {
       headers
     });
 
-    const response = await GET(req, { params: { id: 'test-table' } });
+    const response = await GET(req, createParams('test-table'));
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -154,7 +159,7 @@ describe('Table Read API', () => {
       headers
     });
 
-    const response = await GET(req, { params: { id: 'test-table' } });
+    const response = await GET(req, createParams('test-table'));
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -199,7 +204,7 @@ describe('Table Read API', () => {
      headers
     });
 
-    const response = await GET(req, { params: { id: 'non-existent' } });
+    const response = await GET(req, createParams('non-existent'));
     const data = await response.json();
 
     expect(response.status).toBe(404);
@@ -210,7 +215,7 @@ describe('Table Read API', () => {
     // Create request with no headers
     const req = new NextRequest('http://localhost/api/tables/test-table');
 
-    const response = await GET(req, { params: { id: 'test-table' } });
+    const response = await GET(req, createParams('test-table'));
     const data = await response.json();
 
     expect(response.status).toBe(401);
@@ -229,7 +234,7 @@ describe('Table Read API', () => {
         headers
     });
 
-    const response = await GET(req, { params: { id: 'test-table' } });
+    const response = await GET(req, createParams('test-table'));
     const data = await response.json();
 
     expect(response.status).toBe(401);
@@ -258,7 +263,7 @@ describe('Table Read API', () => {
         headers
     });
 
-    const response = await GET(req, { params: { id: 'test-table' } });
+    const response = await GET(req, createParams('test-table'));
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -270,14 +275,14 @@ describe('Table Read API', () => {
   });
 
   it('should cache table data after fetching', async () => {
-        const headers = new Headers({
-        'Authorization': `Bearer ${mockToken}`
-      });
+    const headers = new Headers({
+      'Authorization': `Bearer ${mockToken}`
+    });
     const req = new NextRequest('http://localhost/api/tables/test-table', {
      headers
     });
 
-    await GET(req, { params: { id: 'test-table' } });
+    await GET(req, createParams('test-table'));
 
     expect(setCachedData).toHaveBeenCalledTimes(1);
     expect(setCachedData).toHaveBeenCalledWith('table:test-table', mockTable);
@@ -295,14 +300,14 @@ describe('Table Read API', () => {
 
     // First request should succeed
     jest.mocked(rateLimitMiddleware).mockResolvedValueOnce(null);
-    const response1 = await GET(req, { params: { id: 'test-table' } });
+    const response1 = await GET(req, createParams('test-table'));
     expect(response1.status).toBe(200);
 
     // Second request should be rate limited
     jest.mocked(rateLimitMiddleware).mockResolvedValueOnce(
       NextResponse.json({ error: 'Too many requests' }, { status: 429 })
     );
-    const response2 = await GET(req, { params: { id: 'test-table' } });
+    const response2 = await GET(req, createParams('test-table'));
     const data2 = await response2.json();
 
     expect(response2.status).toBe(429);
