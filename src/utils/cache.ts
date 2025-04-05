@@ -66,5 +66,10 @@ export function invalidateCache(key: string) {
   }
 }
 
+// Add function to delete cache entry
+export function deleteCachedData(key: string) {
+  cache.delete(key);
+}
+
 // Export the cache instance for direct access if needed
 export { cache }; 

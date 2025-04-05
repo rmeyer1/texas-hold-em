@@ -121,12 +121,12 @@ jest.mock('firebase-admin', () => {
   };
 });
 
-// Mock Firebase Admin Auth
-jest.mock('firebase-admin/auth', () => ({
-  getAuth: jest.fn().mockReturnValue({
-    verifyIdToken: jest.fn().mockResolvedValue({ uid: 'test-user' }),
-  }),
-}));
+// // Mock Firebase Admin Auth
+// jest.mock('firebase-admin/auth', () => ({
+//   getAuth: jest.fn().mockReturnValue({
+//     verifyIdToken: jest.fn().mockResolvedValue({ uid: 'test-user' }),
+//   }),
+// }));
 
 // Reset all mocks after each test
 afterEach(() => {
@@ -139,7 +139,27 @@ jest.mock('@/app/api/middleware', () => ({
   rateLimitMiddleware: jest.fn().mockResolvedValue(null)
 }));
 
-// Mock database service with basic implementation
+// Mock cache utils
+jest.mock('@/utils/cache', () => ({
+  getCachedData: jest.fn(),
+  setCachedData: jest.fn(),
+  deleteCachedData: jest.fn()
+}));
+
+// Mock GameManager
+jest.mock('@/services/gameManager', () => {
+  const mockGameManagerInstance = {
+    getTableData: jest.fn(),
+    getPrivatePlayerData: jest.fn(),
+    handlePlayerAction: jest.fn()
+  };
+  return {
+    GameManager: jest.fn().mockImplementation(() => mockGameManagerInstance),
+    getTableData: jest.fn()
+  };
+});
+
+// Mock database service
 jest.mock('@/services/databaseService', () => {
   class MockDatabaseService {
     getTable = jest.fn();
@@ -156,16 +176,11 @@ jest.mock('@/services/databaseService', () => {
     subscribeToTable = jest.fn();
     addPlayer = jest.fn();
     updateTableTransaction = jest.fn();
+    getPrivatePlayerData = jest.fn();
     static getTableData = jest.fn();
   }
   return { DatabaseService: MockDatabaseService };
 });
-
-// Mock cache utils
-jest.mock('@/utils/cache', () => ({
-  getCachedData: jest.fn(),
-  setCachedData: jest.fn()
-}));
 
 // Mock logger
 jest.mock('@/utils/logger', () => ({
@@ -182,5 +197,19 @@ jest.mock('@/utils/logger', () => ({
     info: jest.fn(),
     debug: jest.fn()
   }
+}));
+
+// Mock next/server for NextResponse
+jest.mock('next/server', () => ({
+  NextResponse: {
+    json: jest.fn((body, init) => ({
+      ok: true,
+      status: init?.status || 200,
+      json: async () => body,
+      text: async () => JSON.stringify(body), // Add text method for consistency
+      headers: new Headers(init?.headers),
+    })),
+  },
+  NextRequest: jest.fn(), // Mock NextRequest as well
 })); 
 
