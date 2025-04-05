@@ -155,7 +155,7 @@ jest.mock('@/services/gameManager', () => {
   };
   return {
     GameManager: jest.fn().mockImplementation(() => mockGameManagerInstance),
-    getTableData: jest.fn()
+    getTableData: mockGameManagerInstance.getTableData
   };
 });
 
@@ -200,16 +200,35 @@ jest.mock('@/utils/logger', () => ({
 }));
 
 // Mock next/server for NextResponse
+// Mock next/server for NextRequest and NextResponse
 jest.mock('next/server', () => ({
+  NextRequest: class MockNextRequest {
+    headers: Headers;
+    method: string;
+    body: string;
+    url: string;
+    constructor(url: string, init: { method: string; headers: Headers; body: string }) {
+      this.url = url;
+      this.headers = init.headers;
+      this.method = init.method;
+      this.body = init.body;
+    }
+    async json() {
+      try {
+        return JSON.parse(this.body);
+      } catch (error) {
+        throw new Error('Failed to parse JSON body');
+      }
+    }
+  },
   NextResponse: {
     json: jest.fn((body, init) => ({
       ok: true,
       status: init?.status || 200,
       json: async () => body,
-      text: async () => JSON.stringify(body), // Add text method for consistency
+      text: async () => JSON.stringify(body),
       headers: new Headers(init?.headers),
     })),
   },
-  NextRequest: jest.fn(), // Mock NextRequest as well
 })); 
 

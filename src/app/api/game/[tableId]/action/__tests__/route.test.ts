@@ -16,11 +16,13 @@ const mockDeleteCachedData = deleteCachedData as jest.Mock;
 
 // Mock GameManager implementation
 const mockHandlePlayerAction = jest.fn();
+const mockVerifyIdToken = jest.fn(); // Add this
 
 // Instance method mocks (via the constructor mock in jest.setup.ts)
 ((GameManager as unknown)as jest.Mock).mockImplementation(() => ({
     handlePlayerAction: mockHandlePlayerAction
 }));
+
 
 describe('POST /api/game/[tableId]/action', () => {
     const tableId = 'test-table-456';
@@ -73,7 +75,6 @@ describe('POST /api/game/[tableId]/action', () => {
         const req = mockRequest(invalidBody);
         const response = await POST(req, { params: { tableId } });
         const body = await response.json();
-
         expect(response.status).toBe(400);
         expect(body.error).toBe('Invalid request body');
         expect(body.details).toBeDefined();
@@ -184,14 +185,13 @@ describe('POST /api/game/[tableId]/action', () => {
     });
 
     it('should return 500 if verifying token fails unexpectedly', async () => {
-        mockHandlePlayerAction.mockRejectedValueOnce(new Error('Token verification failed'));
-        
+        mockVerifyIdToken.mockRejectedValueOnce(new Error('Token verification failed'));
         const req = mockRequest({ action: 'fold' });
         const response = await POST(req, { params: { tableId } });
         const body = await response.json();
-
         expect(response.status).toBe(500);
         expect(body.error).toContain('Internal server error during auth');
         expect(mockHandlePlayerAction).not.toHaveBeenCalled();
-    });
+        expect(mockDeleteCachedData).not.toHaveBeenCalled();
+      });
 }); 
