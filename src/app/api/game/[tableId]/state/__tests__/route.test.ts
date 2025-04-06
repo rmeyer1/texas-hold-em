@@ -25,6 +25,9 @@ const mockGetPrivatePlayerData = jest.fn();
     getPrivatePlayerData: mockGetPrivatePlayerData
 }));
 
+// Add the static method mock
+GameManager.getTableData = mockGetTableData;
+
 // Mock dependencies
 jest.mock('@/services/gameManager');
 jest.mock('@/services/databaseService');

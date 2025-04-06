@@ -185,7 +185,9 @@ describe('POST /api/game/[tableId]/action', () => {
     });
 
     it('should return 500 if verifying token fails unexpectedly', async () => {
-        mockVerifyIdToken.mockRejectedValueOnce(new Error('Token verification failed'));
+        (getAuth() as any).verifyIdToken = jest.fn().mockRejectedValueOnce(
+            new Error('Token verification failed')
+        );
         const req = mockRequest({ action: 'fold' });
         const response = await POST(req, { params: { tableId } });
         const body = await response.json();
