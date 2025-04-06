@@ -4,7 +4,7 @@ import { PlayerManager } from './playerManager';
 import { PhaseManager } from './phaseManager';
 import { HandEvaluator } from './handEvaluator';
 import { BettingManager } from './bettingManager';
-import type { Table, Player, Card, PlayerAction } from '@/types/poker';
+import type { Table, Player, Card, PlayerAction, PrivatePlayerData } from '@/types/poker';
 import { serializeError } from '@/utils/errorUtils';
 import logger from '@/utils/logger';
 
@@ -668,6 +668,32 @@ export class GameManager {
     const handId = table?.handId;
     
     return await this.db.getPlayerCards(playerId, handId);
+  }
+
+  /**
+   * Get a player's private data (hole cards, etc.)
+   */
+  async getPrivatePlayerData(tableId: string, playerId: string): Promise<PrivatePlayerData | null> {
+    // Note: tableId parameter is included to match the spec/API usage, 
+    // even though this.db is already scoped to the tableId.
+    logger.log('[GameManager] Getting private player data:', {
+      tableId: this.tableId, // Use internal tableId for logging consistency
+      playerId,
+      timestamp: new Date().toISOString(),
+    });
+    try {
+      // Delegate fetching to DatabaseService
+      return await this.db.getPrivatePlayerData(playerId);
+    } catch (error) {
+      logger.error('[GameManager] Error getting private player data:', {
+        tableId: this.tableId,
+        playerId,
+        error: serializeError(error),
+        timestamp: new Date().toISOString(),
+      });
+      // Re-throw or handle as appropriate for the caller (API route)
+      throw error; 
+    }
   }
 
   /**

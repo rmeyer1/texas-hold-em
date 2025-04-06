@@ -48,7 +48,7 @@ export interface Player {
   cards?: Card[]; // Optional: for in-memory use, aligns with startNewHand
 }
 
-export type PlayerAction = 'fold' | 'check' | 'call' | 'raise'; // New: for handlePlayerAction
+export type PlayerAction = 'fold' | 'check' | 'call' | 'raise'| 'bet'; // New: for handlePlayerAction
 
 export interface Table {
   id: string;

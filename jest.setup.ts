@@ -121,12 +121,12 @@ jest.mock('firebase-admin', () => {
   };
 });
 
-// Mock Firebase Admin Auth
-jest.mock('firebase-admin/auth', () => ({
-  getAuth: jest.fn().mockReturnValue({
-    verifyIdToken: jest.fn().mockResolvedValue({ uid: 'test-user' }),
-  }),
-}));
+// // Mock Firebase Admin Auth
+// jest.mock('firebase-admin/auth', () => ({
+//   getAuth: jest.fn().mockReturnValue({
+//     verifyIdToken: jest.fn().mockResolvedValue({ uid: 'test-user' }),
+//   }),
+// }));
 
 // Reset all mocks after each test
 afterEach(() => {
@@ -139,7 +139,27 @@ jest.mock('@/app/api/middleware', () => ({
   rateLimitMiddleware: jest.fn().mockResolvedValue(null)
 }));
 
-// Mock database service with basic implementation
+// Mock cache utils
+jest.mock('@/utils/cache', () => ({
+  getCachedData: jest.fn(),
+  setCachedData: jest.fn(),
+  deleteCachedData: jest.fn()
+}));
+
+// Mock GameManager
+jest.mock('@/services/gameManager', () => {
+  const mockGameManagerInstance = {
+    getTableData: jest.fn(),
+    getPrivatePlayerData: jest.fn(),
+    handlePlayerAction: jest.fn()
+  };
+  return {
+    GameManager: jest.fn().mockImplementation(() => mockGameManagerInstance),
+    getTableData: mockGameManagerInstance.getTableData
+  };
+});
+
+// Mock database service
 jest.mock('@/services/databaseService', () => {
   class MockDatabaseService {
     getTable = jest.fn();
@@ -156,16 +176,11 @@ jest.mock('@/services/databaseService', () => {
     subscribeToTable = jest.fn();
     addPlayer = jest.fn();
     updateTableTransaction = jest.fn();
+    getPrivatePlayerData = jest.fn();
     static getTableData = jest.fn();
   }
   return { DatabaseService: MockDatabaseService };
 });
-
-// Mock cache utils
-jest.mock('@/utils/cache', () => ({
-  getCachedData: jest.fn(),
-  setCachedData: jest.fn()
-}));
 
 // Mock logger
 jest.mock('@/utils/logger', () => ({
@@ -182,5 +197,38 @@ jest.mock('@/utils/logger', () => ({
     info: jest.fn(),
     debug: jest.fn()
   }
+}));
+
+// Mock next/server for NextResponse
+// Mock next/server for NextRequest and NextResponse
+jest.mock('next/server', () => ({
+  NextRequest: class MockNextRequest {
+    headers: Headers;
+    method: string;
+    body: string;
+    url: string;
+    constructor(url: string, init: { method: string; headers: Headers; body: string }) {
+      this.url = url;
+      this.headers = init.headers;
+      this.method = init.method;
+      this.body = init.body;
+    }
+    async json() {
+      try {
+        return JSON.parse(this.body);
+      } catch (error) {
+        throw new Error('Failed to parse JSON body');
+      }
+    }
+  },
+  NextResponse: {
+    json: jest.fn((body, init) => ({
+      ok: true,
+      status: init?.status || 200,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+      headers: new Headers(init?.headers),
+    })),
+  },
 })); 
 

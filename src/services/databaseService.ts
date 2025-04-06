@@ -216,6 +216,47 @@ export class DatabaseService {
   }
 
   /**
+   * Get a player's full private data object
+   */
+  async getPrivatePlayerData(playerId: string): Promise<PrivatePlayerData | null> {
+    try {
+      const privatePlayerRef = this.getPrivatePlayerRef(playerId);
+      const snapshot = await get(privatePlayerRef);
+
+      if (!snapshot.exists()) {
+        logger.log('[DatabaseService] No private data found for player:', {
+          tableId: this.tableId,
+          playerId
+        });
+        return null;
+      }
+
+      const data = snapshot.val() as ExtendedPrivatePlayerData; // Use Extended to handle handId potentially
+
+      logger.log('[DatabaseService] Retrieved private player data:', {
+        tableId: this.tableId,
+        playerId,
+        handId: data.handId, // Log handId if present
+        hasCards: !!data.holeCards
+      });
+
+      // Return the relevant parts conforming to PrivatePlayerData
+      return {
+        holeCards: data.holeCards || null,
+        lastUpdated: data.lastUpdated
+      };
+    } catch (error) {
+      logger.error('[DatabaseService] Error getting private player data:', {
+        tableId: this.tableId,
+        playerId,
+        error: serializeError(error),
+        timestamp: new Date().toISOString(),
+      });
+      throw new Error(`Failed to get private player data: ${serializeError(error)}`);
+    }
+  }
+
+  /**
    * Subscribe to table changes
    */
   subscribeToTable(callback: (table: Table) => void): () => void {
