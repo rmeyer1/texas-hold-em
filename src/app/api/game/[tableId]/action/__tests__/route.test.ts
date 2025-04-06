@@ -60,7 +60,7 @@ describe('POST /api/game/[tableId]/action', () => {
         mockAuthMiddleware.mockResolvedValueOnce(unauthorizedResponse);
 
         const req = mockRequest({ action: 'fold' });
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(mockAuthMiddleware).toHaveBeenCalledWith(req);
@@ -73,7 +73,7 @@ describe('POST /api/game/[tableId]/action', () => {
     it('should return 400 for invalid request body (zod validation)', async () => {
         const invalidBody = { action: 'invalid-action' }; // Action not in enum
         const req = mockRequest(invalidBody);
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
         expect(response.status).toBe(400);
         expect(body.error).toBe('Invalid request body');
@@ -85,7 +85,7 @@ describe('POST /api/game/[tableId]/action', () => {
     it('should return 400 if amount is missing for bet action', async () => {
         const invalidBody = { action: 'bet' }; // Missing amount
         const req = mockRequest(invalidBody);
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(400);
@@ -97,7 +97,7 @@ describe('POST /api/game/[tableId]/action', () => {
     it('should return 400 if amount is missing for raise action', async () => {
         const invalidBody = { action: 'raise' }; // Missing amount
         const req = mockRequest(invalidBody);
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(400);
@@ -106,7 +106,7 @@ describe('POST /api/game/[tableId]/action', () => {
         expect(mockHandlePlayerAction).not.toHaveBeenCalled();
     });
     
-     it('should return 400 if request body is not valid JSON', async () => {
+    it('should return 400 if request body is not valid JSON', async () => {
         const headers = new Headers({ 'Content-Type': 'application/json' });
         headers.append('Authorization', `Bearer valid-token`);
         const req = new NextRequest(`http://localhost/api/game/${tableId}/action`, {
@@ -115,7 +115,7 @@ describe('POST /api/game/[tableId]/action', () => {
             body: '{\"action\": \"fold\",,}', // Invalid JSON
         });
 
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(400);
@@ -131,11 +131,12 @@ describe('POST /api/game/[tableId]/action', () => {
         [{ action: 'raise' as PlayerAction, amount: 200 }]
     ])('should successfully handle %o action and invalidate cache', async (actionBody) => {
         const req = mockRequest(actionBody);
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(mockAuthMiddleware).toHaveBeenCalledTimes(1);
-        expect(mockHandlePlayerAction).toHaveBeenCalledWith(userId, actionBody.action, (actionBody as { amount?: number }).amount);        expect(mockDeleteCachedData).toHaveBeenCalledWith(cacheKey);
+        expect(mockHandlePlayerAction).toHaveBeenCalledWith(userId, actionBody.action, (actionBody as { amount?: number }).amount);
+        expect(mockDeleteCachedData).toHaveBeenCalledWith(cacheKey);
         expect(response.status).toBe(200);
         expect(body.success).toBe(true);
     });
@@ -143,7 +144,7 @@ describe('POST /api/game/[tableId]/action', () => {
     it('should return 409 if GameManager throws "Not player\'s turn" error', async () => {
         mockHandlePlayerAction.mockRejectedValueOnce(new Error("Not player's turn to act"));
         const req = mockRequest({ action: 'call' });
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(409);
@@ -154,7 +155,7 @@ describe('POST /api/game/[tableId]/action', () => {
     it('should return 404 if GameManager throws "Table not found" error', async () => {
         mockHandlePlayerAction.mockRejectedValueOnce(new Error('Table not found'));
         const req = mockRequest({ action: 'fold' });
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(404);
@@ -162,10 +163,10 @@ describe('POST /api/game/[tableId]/action', () => {
         expect(mockDeleteCachedData).not.toHaveBeenCalled();
     });
     
-     it('should return 400 if GameManager throws an amount-related error', async () => {
+    it('should return 400 if GameManager throws an amount-related error', async () => {
         mockHandlePlayerAction.mockRejectedValueOnce(new Error('Raise amount too small'));
         const req = mockRequest({ action: 'raise', amount: 5 });
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(400);
@@ -176,7 +177,7 @@ describe('POST /api/game/[tableId]/action', () => {
     it('should return 500 for unexpected errors from GameManager', async () => {
         mockHandlePlayerAction.mockRejectedValueOnce(new Error('Unexpected database error'));
         const req = mockRequest({ action: 'call' });
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(500);
@@ -189,11 +190,11 @@ describe('POST /api/game/[tableId]/action', () => {
             new Error('Token verification failed')
         );
         const req = mockRequest({ action: 'fold' });
-        const response = await POST(req, { params: { tableId } });
+        const response = await POST(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
         expect(response.status).toBe(500);
         expect(body.error).toContain('Internal server error during auth');
         expect(mockHandlePlayerAction).not.toHaveBeenCalled();
         expect(mockDeleteCachedData).not.toHaveBeenCalled();
-      });
+    });
 }); 

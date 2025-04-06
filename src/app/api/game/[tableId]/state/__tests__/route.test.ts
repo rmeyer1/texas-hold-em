@@ -78,7 +78,7 @@ describe('GET /api/game/[tableId]/state', () => {
         mockAuthMiddleware.mockResolvedValueOnce(unauthorizedResponse);
 
         const req = mockRequest();
-        const response = await GET(req, { params: { tableId } });
+        const response = await GET(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(mockAuthMiddleware).toHaveBeenCalledWith(req);
@@ -93,7 +93,7 @@ describe('GET /api/game/[tableId]/state', () => {
         mockGetCachedData.mockReturnValueOnce(null); // Explicit cache miss
 
         const req = mockRequest();
-        const response = await GET(req, { params: { tableId } });
+        const response = await GET(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(mockAuthMiddleware).toHaveBeenCalledTimes(1);
@@ -120,7 +120,7 @@ describe('GET /api/game/[tableId]/state', () => {
         mockGetPrivatePlayerData.mockResolvedValueOnce(freshPrivateData); // Simulate fresh data
 
         const req = mockRequest();
-        const response = await GET(req, { params: { tableId } });
+        const response = await GET(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(mockGetCachedData).toHaveBeenCalledWith(`game:${tableId}`);
@@ -141,7 +141,7 @@ describe('GET /api/game/[tableId]/state', () => {
         mockGetTableData.mockResolvedValueOnce(null); // Table not found
 
         const req = mockRequest();
-        const response = await GET(req, { params: { tableId } });
+        const response = await GET(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(mockGetTableData).toHaveBeenCalledWith(tableId);
@@ -155,7 +155,7 @@ describe('GET /api/game/[tableId]/state', () => {
         mockVerifyIdToken.mockRejectedValueOnce(new Error('Token verification failed'));
         
         const req = mockRequest();
-        const response = await GET(req, { params: { tableId } });
+        const response = await GET(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(500);
@@ -167,7 +167,7 @@ describe('GET /api/game/[tableId]/state', () => {
         mockGetTableData.mockRejectedValueOnce(new Error('DB error fetching table'));
 
         const req = mockRequest();
-        const response = await GET(req, { params: { tableId } });
+        const response = await GET(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(500);
@@ -181,7 +181,7 @@ describe('GET /api/game/[tableId]/state', () => {
         mockGetPrivatePlayerData.mockRejectedValueOnce(new Error('DB error fetching private data'));
 
         const req = mockRequest();
-        const response = await GET(req, { params: { tableId } });
+        const response = await GET(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(response.status).toBe(500);
@@ -189,14 +189,14 @@ describe('GET /api/game/[tableId]/state', () => {
         expect(mockSetCachedData).not.toHaveBeenCalled(); // Should not cache if private fetch fails
     });
 
-     it('should return cached public data with null private data if fetching private data fails on cache hit', async () => {
+    it('should return cached public data with null private data if fetching private data fails on cache hit', async () => {
         const cachedPublicData = { ...mockTableData, name: 'Cached Hit Error Name' };
         const cacheEntry = { data: cachedPublicData, timestamp: Date.now() - 1000 };
         mockGetCachedData.mockReturnValueOnce(cacheEntry); // Cache hit
         mockGetPrivatePlayerData.mockRejectedValueOnce(new Error('DB error fetching private data on hit')); // Error on private fetch
 
         const req = mockRequest();
-        const response = await GET(req, { params: { tableId } });
+        const response = await GET(req, { params: Promise.resolve({ tableId }) });
         const body = await response.json();
 
         expect(mockGetCachedData).toHaveBeenCalledWith(`game:${tableId}`);
