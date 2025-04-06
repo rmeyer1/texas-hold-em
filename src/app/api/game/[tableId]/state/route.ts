@@ -15,14 +15,17 @@ interface GameStateResponse {
   timestamp?: number;
 }
 
-export async function GET(req: NextRequest, { params }: { params: { tableId: string } }) {
+export async function GET(
+  req: NextRequest,
+  context: { params: Promise<{ tableId: string }> }
+) {
+  const { tableId } = await context.params;
+  
   const authResult = await authMiddleware(req);
   if (authResult) {
-    logger.warn('[API /game/state] Authentication failed', { tableId: params.tableId, status: authResult.status });
+    logger.warn('[API /game/state] Authentication failed', { tableId, status: authResult.status });
     return authResult; // Return the unauthorized response
   }
-
-  const { tableId } = params;
 
   // Verify token and get userId
   let userId: string;

@@ -20,14 +20,17 @@ const actionSchema = z.object({
   return true;
 }, { message: 'Amount is required and must be positive for bet/raise actions' });
 
-export async function POST(req: NextRequest, { params }: { params: { tableId: string } }) {
+export async function POST(
+  req: NextRequest,
+  context: { params: Promise<{ tableId: string }> }
+) {
+  const { tableId } = await context.params;
+  
   const authResult = await authMiddleware(req);
   if (authResult) {
-    logger.warn('[API /game/action] Authentication failed', { tableId: params.tableId, status: authResult.status });
+    logger.warn('[API /game/action] Authentication failed', { tableId, status: authResult.status });
     return authResult; // Return the unauthorized response
   }
-
-  const { tableId } = params;
 
   // Verify token and get userId
   let userId: string;
