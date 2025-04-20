@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getAuth } from 'firebase-admin/auth';
 import { getDatabase } from 'firebase-admin/database';
 import { authMiddleware } from '@/app/api/middleware';
+import { TableService } from '@/server/services/TableService';
 
 const TableCreateSchema = z.object({
   name: z.string().min(3).max(50),
@@ -63,24 +64,30 @@ export async function POST(req: NextRequest) {
     // Generate unique table ID with timestamp and random string
     const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
-    const tableData = {
-      id: tableId,
+    const tableService = new TableService(tableId);
+    const result = await tableService.createTable(tableId);
+
+    if (!result.success) {
+      return NextResponse.json(
+        { error: result.error?.message || 'Failed to create table' },
+        { status: 500 }
+      );
+    }
+
+    // Update table with additional data
+    const updateResult = await tableService.updateTable({
       ...validatedData,
       createdAt: Date.now(),
       creatorId: userId,
-      // Initial game state
-      phase: 'waiting',
-      pot: 0,
-      players: [],
-      communityCards: [],
-      currentBet: 0,
-      dealerPosition: 0,
-      currentPlayerIndex: 0,
-      timestamp: Date.now()
-    };
+      phase: 'waiting'
+    });
 
-    // Create the table in Firebase
-    await db.ref(`tables/${tableId}`).set(tableData);
+    if (!updateResult.success) {
+      return NextResponse.json(
+        { error: updateResult.error?.message || 'Failed to update table data' },
+        { status: 500 }
+      );
+    }
     
     return NextResponse.json({ 
       tableId,

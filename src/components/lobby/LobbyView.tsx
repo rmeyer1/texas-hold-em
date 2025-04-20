@@ -8,6 +8,8 @@ import { connectionManager } from '@/services/connectionManager';
 import { LobbyTable } from './LobbyTable';
 import { useAuth } from '@/contexts/AuthContext';
 import { GameManager } from '@/services/gameManager';
+import { TableServiceClient } from '@/services/tableService.client';
+import logger from '@/utils/logger';
 
 interface TableData {
   id: string;
@@ -52,6 +54,8 @@ export const LobbyView = (): React.ReactElement => {
     password: '',
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [isCreatingTable, setIsCreatingTable] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const tablesRef = ref(database, 'tables');
@@ -85,8 +89,31 @@ export const LobbyView = (): React.ReactElement => {
     };
   }, []);
 
-  const handleJoinTable = (tableId: string): void => {
-    router.push(`/table/${tableId}`);
+  const handleJoinTable = async (tableId: string): Promise<void> => {
+    if (!user) {
+      setError('You must be logged in to join a table');
+      return;
+    }
+
+    try {
+      const tableService = new TableServiceClient(tableId);
+      const result = await tableService.addPlayer({
+        id: user.uid,
+        name: user.displayName || 'Anonymous',
+        position: 0, // Will be assigned by the server
+        chips: 1000, // Default starting chips
+      });
+
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+
+      router.push(`/table/${tableId}`);
+    } catch (err) {
+      logger.error('[LobbyView] Error joining table:', err);
+      setError('Failed to join table. Please try again.');
+    }
   };
 
   // Check if a table name already exists
@@ -170,6 +197,45 @@ export const LobbyView = (): React.ReactElement => {
     }));
   };
 
+  const handleCreateTable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsCreatingTable(true);
+    setError(null);
+
+    try {
+      // Create a temporary tableId - the actual one will be assigned by the server
+      const tempTableId = 'temp';
+      const tableService = new TableServiceClient(tempTableId);
+      
+      const result = await tableService.createTable({
+        name: formData.name,
+        smallBlind: formData.smallBlind,
+        bigBlind: formData.smallBlind * 2,
+        maxPlayers: formData.maxPlayers,
+        isPrivate: formData.isPrivate,
+        password: formData.isPrivate ? formData.password : undefined
+      });
+
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+
+      if (!result.data?.tableId) {
+        setError('Failed to create table: No table ID returned');
+        return;
+      }
+
+      // Redirect to the new table
+      router.push(`/table/${result.data.tableId}`);
+    } catch (err) {
+      logger.error('[LobbyView] Error creating table:', err);
+      setError('Failed to create table. Please try again.');
+    } finally {
+      setIsCreatingTable(false);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="flex flex-col sm:flex-row justify-between items-center mb-8">
@@ -210,7 +276,7 @@ export const LobbyView = (): React.ReactElement => {
               </button>
             </div>
             
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleCreateTable} className="space-y-5">
               <div>
                 <label className="block text-gray-300 mb-2 font-medium">Table Name</label>
                 <input
