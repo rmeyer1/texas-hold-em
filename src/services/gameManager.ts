@@ -1,4 +1,3 @@
-import { DatabaseService } from './databaseService';
 import { DeckManager } from './deckManager';
 import { PlayerManager } from './playerManager';
 import { PhaseManager } from './phaseManager';
@@ -7,9 +6,10 @@ import { BettingManager } from './bettingManager';
 import type { Table, Player, Card, PlayerAction, PrivatePlayerData } from '@/types/poker';
 import { serializeError } from '@/utils/errorUtils';
 import logger from '@/utils/logger';
+import { ITableService } from './interfaces/ITableService';
 
 export class GameManager {
-  private db: DatabaseService;
+  private tableService: ITableService;
   private deck: DeckManager;
   private players: PlayerManager;
   private phases: PhaseManager;
@@ -22,14 +22,14 @@ export class GameManager {
   private static readonly DEFAULT_SMALL_BLIND = 10;
   private static readonly DEFAULT_BIG_BLIND = 20;
 
-  constructor(tableId: string) {
-    this.tableId = tableId;
-    this.db = new DatabaseService(tableId);
-    this.deck = new DeckManager(tableId);
-    this.players = new PlayerManager(tableId);
-    this.phases = new PhaseManager(tableId);
-    this.handEvaluator = new HandEvaluator(tableId);
-    this.bettingManager = new BettingManager(tableId);
+  constructor(tableService: ITableService) {
+    this.tableService = tableService;
+    this.tableId = tableService.getTableId();
+    this.deck = new DeckManager(this.tableId);
+    this.players = new PlayerManager(this.tableId);
+    this.phases = new PhaseManager(this.tableId);
+    this.handEvaluator = new HandEvaluator(this.tableId);
+    this.bettingManager = new BettingManager(this.tableId);
   }
 
   /**
@@ -49,7 +49,7 @@ export class GameManager {
   private async commitBatch(table: Table): Promise<void> {
     if (this.isBatching && Object.keys(this.pendingUpdates).length > 0) {
       Object.assign(table, this.pendingUpdates);
-      await this.db.forceUpdateTable(table);      this.pendingUpdates = {};
+      await this.tableService.forceUpdateTable(table);      this.pendingUpdates = {};
       this.isBatching = false;
     }
   }
@@ -58,7 +58,7 @@ export class GameManager {
    */
   public async initialize(): Promise<void> {
     try {
-      const table = await this.db.getTable();
+      const table = await this.tableService.getTable();
       if (!table) {
         logger.warn('[GameManager] Table not found during initialization');
       }
@@ -77,21 +77,21 @@ export class GameManager {
    */
   public subscribeToTableState(callback: (table: Table) => void): () => void {
     this.tableStateCallback = callback;
-    return this.db.subscribeToTable(callback);
+    return this.tableService.subscribeToTable(callback);
   }
 
   /**
    * Get the current table state
    */
   public async getTableState(): Promise<Table | null> {
-    return await this.db.getTable();
+    return await this.tableService.getTable();
   }
 
   /**
    * Add a player to the table
    */
   public async addPlayer(player: Omit<Player, 'isActive' | 'hasFolded'>): Promise<void> {
-    await this.db.addPlayer(player);
+    await this.tableService.addPlayer(player);
   }
 
   /**
@@ -100,7 +100,7 @@ export class GameManager {
   public async handlePlayerAction(playerId: string, action: PlayerAction, amount?: number): Promise<void> {
     logger.log('[GameManager] handlePlayerAction called:', { playerId, action, amount });
     try {
-      const table = await this.db.getTable();
+      const table = await this.tableService.getTable();
       if (!table) throw new Error('Table not found');
   
       if (!table.roundBets) table.roundBets = {};
@@ -146,14 +146,14 @@ export class GameManager {
       }
       
       // Apply updates to the table
-      await this.db.updateTableTransaction((currentTable) => {
+      await this.tableService.updateTableTransaction((currentTable) => {
         // Merge the updates from BettingManager
         Object.assign(currentTable, updates);
         return currentTable;
       });
 
       // Move to the next player or phase with the updated table
-      const updatedTable = await this.db.getTable();
+      const updatedTable = await this.tableService.getTable();
       if (!updatedTable) throw new Error('Table not found after transaction');
       await this.moveToNextPlayer(updatedTable);
     } catch (error) {
@@ -213,7 +213,7 @@ export class GameManager {
       table.currentPlayerIndex = newIndex;
       table.lastActionTimestamp = Date.now(); // Update on each move
       logger.log('[GameManager] moveToNextPlayer updating table:', { currentPlayerIndex: table.currentPlayerIndex });
-      await this.db.updateTable(table);
+      await this.tableService.updateTable(table);
     } catch (error) {
       const serializedError = serializeError(error);
       console.error('[GameManager] Error in moveToNextPlayer:', { 
@@ -277,7 +277,7 @@ export class GameManager {
     }
     
     // Update the table
-    await this.db.updateTable(table);
+    await this.tableService.updateTable(table);
   }
 
   /**
@@ -355,7 +355,7 @@ export class GameManager {
       table.winningHands = winningHands; // Store the winning hands in the table
       
       // Update the table
-      await this.db.updateTable(table);
+      await this.tableService.updateTable(table);
       
       // Start a new hand after a delay
       setTimeout(() => this.startNewHand(), 5000);
@@ -381,7 +381,7 @@ export class GameManager {
    */
   public async startNewHand(): Promise<void> {
     try {
-      const table = await this.db.getTable();
+      const table = await this.tableService.getTable();
       if (!table) {
         throw new Error('Table not found');
       }
@@ -590,7 +590,7 @@ export class GameManager {
    */
   public async startGame(): Promise<void> {
     try {
-      const table = await this.db.getTable();
+      const table = await this.tableService.getTable();
       if (!table) {
         logger.error('[GameManager] Cannot start game on non-existent table:', {
           tableId: this.tableId,
@@ -610,7 +610,7 @@ export class GameManager {
       }
       
       // Mark game as started
-      await this.db.updateTable({ gameStarted: true });
+      await this.tableService.updateTable({ gameStarted: true });
       
       // Start the first hand
       await this.startNewHand();
@@ -625,28 +625,29 @@ export class GameManager {
   }
 
   /**
-   * Create a new table
+   * Static method to create a new table
    */
-  public async createTable(
-    tableName: string,
-    smallBlind: number = GameManager.DEFAULT_SMALL_BLIND,
-    bigBlind: number = GameManager.DEFAULT_BIG_BLIND,
-    maxPlayers: number = 9,
-    isPrivate: boolean = false,
+  public static async createTable(
+    tableService: ITableService,
+    name: string,
+    smallBlind: number,
+    bigBlind: number,
+    maxPlayers: number,
+    isPrivate: boolean,
     password?: string
   ): Promise<string> {
     try {
-      return await this.db.createTable(
-        tableName,
+      const result = await tableService.createTable({
+        name,
         smallBlind,
         bigBlind,
         maxPlayers,
         isPrivate,
         password
-      );
+      });
+      return result.tableId;
     } catch (error) {
       logger.error('[GameManager] Error creating table:', {
-        tableName,
         error: serializeError(error),
         timestamp: new Date().toISOString(),
       });
@@ -664,10 +665,10 @@ export class GameManager {
       timestamp: new Date().toISOString(),
     });
     
-    const table = await this.db.getTable();
+    const table = await this.tableService.getTable();
     const handId = table?.handId;
     
-    return await this.db.getPlayerCards(playerId, handId);
+    return await this.tableService.getPlayerCards(playerId, handId);
   }
 
   /**
@@ -675,15 +676,15 @@ export class GameManager {
    */
   async getPrivatePlayerData(tableId: string, playerId: string): Promise<PrivatePlayerData | null> {
     // Note: tableId parameter is included to match the spec/API usage, 
-    // even though this.db is already scoped to the tableId.
+    // even though this.tableService is already scoped to the tableId.
     logger.log('[GameManager] Getting private player data:', {
       tableId: this.tableId, // Use internal tableId for logging consistency
       playerId,
       timestamp: new Date().toISOString(),
     });
     try {
-      // Delegate fetching to DatabaseService
-      return await this.db.getPrivatePlayerData(playerId);
+      // Delegate fetching to ITableService
+      return await this.tableService.getPrivatePlayerData(playerId);
     } catch (error) {
       logger.error('[GameManager] Error getting private player data:', {
         tableId: this.tableId,
@@ -709,7 +710,7 @@ export class GameManager {
         throw new Error('Invalid tableId provided');
       }
       
-      return await DatabaseService.getTableData(tableId);
+      return await ITableService.getTableData(tableId);
     } catch (error) {
       logger.error('[GameManager] Error getting table data:', {
         tableId,
@@ -727,7 +728,7 @@ export class GameManager {
 public async refreshPlayerUsername(playerId: string, username: string): Promise<void> {
   try {
     // Fetch the current table state
-    const table = await this.db.getTable();
+    const table = await this.tableService.getTable();
     if (!table) {
       logger.log(`[GameManager] Table ${this.tableId} not found, skipping username refresh`);
       return;
